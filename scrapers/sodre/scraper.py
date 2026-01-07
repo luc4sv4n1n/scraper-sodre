@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER COMPLETO
+SODRÉ SANTORO - SCRAPER COMPLETO COM PLAYWRIGHT
 Suporta: Veículos + Imóveis + Materiais
+Usa Playwright para obter cookies e headers reais
 """
 
 import sys
@@ -13,7 +14,8 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
-from typing import List, Optional
+from typing import List, Optional, Dict
+from playwright.sync_api import sync_playwright, Browser, Page
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -134,7 +136,7 @@ class SodreScraper:
             self.property_sections + 
             self.heavy_machinery_sections +
             self.scrap_sections +
-            self.scrap_index_sections +  # Sucatas com índice próprio
+            self.scrap_index_sections +
             self.consumption_goods_sections +
             self.industrial_sections +
             self.construction_sections +
@@ -151,22 +153,101 @@ class SodreScraper:
             'duplicates': 0,
         }
         
-        self.headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'pt-BR,pt;q=0.9',
-            'Content-Type': 'application/json',
-            'Origin': self.base_url,
-            'Referer': f'{self.base_url}/veiculos/lotes',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        # Headers e cookies serão obtidos via Playwright
+        self.headers = {}
+        self.cookies = {}
+        self.session = None
+    
+    def _get_browser_context(self) -> tuple:
+        """Obtém cookies e headers usando Playwright"""
+        print("\n🌐 Iniciando Playwright para obter cookies e headers...")
         
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
+        try:
+            with sync_playwright() as p:
+                # Inicia navegador (headless)
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='pt-BR',
+                )
+                
+                page = context.new_page()
+                
+                # Acessa a página principal
+                print(f"  📡 Acessando {self.base_url}...")
+                page.goto(f"{self.base_url}/veiculos/lotes", wait_until='domcontentloaded', timeout=60000)
+                
+                # Aguarda um pouco para carregar
+                time.sleep(3)
+                
+                # Obtém cookies
+                cookies = context.cookies()
+                cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+                
+                # Obtém headers da página
+                headers = {
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Content-Type': 'application/json',
+                    'Origin': self.base_url,
+                    'Referer': f'{self.base_url}/veiculos/lotes',
+                    'User-Agent': page.evaluate('navigator.userAgent'),
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin',
+                }
+                
+                # Tenta pegar headers adicionais de uma requisição real
+                try:
+                    # Faz uma requisição de teste para capturar headers
+                    with page.expect_request(lambda request: '/api/search' in request.url, timeout=5000) as request_info:
+                        page.reload()
+                    
+                    request = request_info.value
+                    for key, value in request.headers.items():
+                        if key.lower() not in ['content-length', 'host']:
+                            headers[key] = value
+                except:
+                    pass  # Se não conseguir capturar, usa os headers padrão
+                
+                browser.close()
+                
+                print(f"  ✅ Cookies obtidos: {len(cookies_dict)}")
+                print(f"  ✅ Headers configurados: {len(headers)}")
+                
+                return headers, cookies_dict
+                
+        except Exception as e:
+            print(f"  ⚠️ Erro ao obter contexto do navegador: {e}")
+            print("  ℹ️ Usando headers e cookies padrão...")
+            
+            # Fallback para headers padrão
+            default_headers = {
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'pt-BR,pt;q=0.9',
+                'Content-Type': 'application/json',
+                'Origin': self.base_url,
+                'Referer': f'{self.base_url}/veiculos/lotes',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            return default_headers, {}
     
     def scrape(self) -> dict:
         print("\n" + "="*60)
-        print("🟣 SODRÉ SANTORO - SCRAPER COMPLETO")
+        print("🟣 SODRÉ SANTORO - SCRAPER COM PLAYWRIGHT")
         print("="*60)
+        
+        # Obtém cookies e headers via Playwright
+        self.headers, self.cookies = self._get_browser_context()
+        
+        # Configura sessão requests com os cookies e headers
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+        
+        # Adiciona cookies à sessão
+        for name, value in self.cookies.items():
+            self.session.cookies.set(name, value, domain='.sodresantoro.com.br')
         
         items_by_table = defaultdict(list)
         global_ids = set()
@@ -210,6 +291,17 @@ class SodreScraper:
                 if response.status_code == 404:
                     print(f" ⚪ Fim")
                     break
+                
+                if response.status_code == 403:
+                    print(f" 🔒 Bloqueado (403) - Renovando contexto...")
+                    # Renova cookies e headers
+                    self.headers, self.cookies = self._get_browser_context()
+                    self.session.headers.update(self.headers)
+                    for name, value in self.cookies.items():
+                        self.session.cookies.set(name, value, domain='.sodresantoro.com.br')
+                    consecutive_errors += 1
+                    time.sleep(10)
+                    continue
                 
                 if response.status_code != 200:
                     print(f" ⚠️ Status {response.status_code}")
@@ -286,7 +378,7 @@ class SodreScraper:
             # Para todas as outras categorias (materiais, etc)
             indices = ["materiais", "judiciais-materiais"]
         
-        return {
+        payload = {
             "indices": indices,
             "query": {
                 "bool": {
@@ -319,11 +411,6 @@ class SodreScraper:
                     ]
                 }
             },
-            "post_filter": {
-                "bool": {
-                    "filter": [{"terms": {"lot_category": lot_categories}}]
-                }
-            },
             "from": page_num * page_size,
             "size": page_size,
             "sort": [
@@ -331,6 +418,16 @@ class SodreScraper:
                 {"auction_date_init": {"order": "asc"}}
             ]
         }
+        
+        # Adiciona filtro de categoria se existir
+        if lot_categories:
+            payload["post_filter"] = {
+                "bool": {
+                    "filter": [{"terms": {"lot_category": lot_categories}}]
+                }
+            }
+        
+        return payload
     
     def _extract_lot(self, source: dict, table: str, display_name: str, extra_fields: dict) -> Optional[dict]:
         try:
@@ -483,7 +580,7 @@ class SodreScraper:
 
 def main():
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER COMPLETO")
+    print("🚀 SODRÉ SANTORO - SCRAPER COM PLAYWRIGHT")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
@@ -497,7 +594,7 @@ def main():
     total_items = sum(len(items) for items in items_by_table.values())
     
     print(f"\n✅ Total coletado: {total_items} itens")
-    print(f"📄 Duplicatas filtradas: {scraper.stats['duplicates']}")
+    print(f"🔄 Duplicatas filtradas: {scraper.stats['duplicates']}")
     
     if not total_items:
         print("⚠️ Nenhum item coletado - encerrando")
