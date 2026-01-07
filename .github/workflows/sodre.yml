@@ -1,0 +1,101 @@
+name: 🟣 Sodré Santoro - Domínio Completo
+
+on:
+  # Execução manual
+  workflow_dispatch:
+  
+  # Cron automático - DUAS VEZES POR MÊS
+  schedule:
+    # Dia 1 e dia 15 de cada mês às 6h UTC (3h da madrugada no Brasil)
+    - cron: '0 6 1,15 * *'
+
+jobs:
+  sodre-scraper:
+    name: 🟣 Sodré Santoro - Scrape Completo
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Dependencies
+        run: |
+          pip install requests==2.31.0 beautifulsoup4==4.12.3 python-dotenv==1.0.1
+          pip install supabase==2.3.4 groq==0.9.0
+          pip install playwright==1.48.0
+          playwright install chromium --with-deps
+      
+      - name: Run Sodré Scraper (Domínio Completo)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}/scrapers
+        run: |
+          echo "========================================"
+          echo "🟣 SODRÉ SANTORO - DOMÍNIO COMPLETO"
+          echo "========================================"
+          echo "📅 Início: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🇧🇷 Horário Brasil: $(TZ='America/Sao_Paulo' date '+%Y-%m-%d %H:%M:%S BRT')"
+          echo "========================================"
+          echo ""
+          echo "🔥 Varrendo TODAS as categorias do Sodré:"
+          echo "   • Veículos (8 subcategorias)"
+          echo "   • Materiais"
+          echo "   • Imóveis"
+          echo "   • Sucatas"
+          echo ""
+          echo "========================================"
+          
+          cd scrapers/sodre
+          python scraper.py
+          
+          echo ""
+          echo "✅ Sodré concluído: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+      
+      - name: Upload Data (Debug)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sodre-${{ github.run_number }}
+          path: scrapers/sodre/data/normalized/sodre_*.json
+          retention-days: 3
+      
+      - name: Generate Summary
+        if: always()
+        run: |
+          echo "## 🟣 Sodré Santoro - Domínio Completo" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "**Modo:** Manual" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Modo:** Cron (automático quinzenal)" >> $GITHUB_STEP_SUMMARY
+            echo "**Frequência:** Dias 1 e 15 de cada mês às 6h UTC (3h BRT)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Horário UTC:** $(date -u '+%Y-%m-%d %H:%M')" >> $GITHUB_STEP_SUMMARY
+          echo "**Horário Brasil:** $(TZ='America/Sao_Paulo' date '+%Y-%m-%d %H:%M')" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Categorias Processadas:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Veículos:" >> $GITHUB_STEP_SUMMARY
+          echo "  - Carros" >> $GITHUB_STEP_SUMMARY
+          echo "  - Utilitários Leves" >> $GITHUB_STEP_SUMMARY
+          echo "  - Motos" >> $GITHUB_STEP_SUMMARY
+          echo "  - Ônibus" >> $GITHUB_STEP_SUMMARY
+          echo "  - Peruas" >> $GITHUB_STEP_SUMMARY
+          echo "  - Utilitários Pesados" >> $GITHUB_STEP_SUMMARY
+          echo "  - Vans Leves" >> $GITHUB_STEP_SUMMARY
+          echo "  - Caminhões" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Materiais" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Imóveis" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Sucatas" >> $GITHUB_STEP_SUMMARY
