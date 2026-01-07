@@ -4,10 +4,10 @@ on:
   # Execução manual
   workflow_dispatch:
   
-  # Cron automático - DUAS VEZES POR MÊS
+  # Cron automático - DIA SIM, DIA NÃO (dias ímpares)
   schedule:
-    # Dia 1 e dia 15 de cada mês às 6h UTC (3h da madrugada no Brasil)
-    - cron: '0 6 1,15 * *'
+    # Dias 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31 às 6h UTC (3h BRT)
+    - cron: '0 6 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31 * *'
 
 jobs:
   sodre-scraper:
@@ -46,15 +46,15 @@ jobs:
           echo "========================================"
           echo ""
           echo "🔥 Varrendo TODAS as categorias do Sodré:"
-          echo "   • Veículos (8 subcategorias)"
-          echo "   • Materiais"
-          echo "   • Imóveis"
-          echo "   • Sucatas"
+          echo "   • Veículos (9 subcategorias)"
+          echo "   • Imóveis (6 subcategorias)"
+          echo "   • Materiais (20+ subcategorias)"
+          echo "   • Sucatas (2 índices)"
           echo ""
           echo "========================================"
           
           cd scrapers/sodre
-          python scraper.py
+          python sodre_scraper_rapido.py
           
           echo ""
           echo "✅ Sodré concluído: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
@@ -76,8 +76,8 @@ jobs:
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "**Modo:** Manual" >> $GITHUB_STEP_SUMMARY
           else
-            echo "**Modo:** Cron (automático quinzenal)" >> $GITHUB_STEP_SUMMARY
-            echo "**Frequência:** Dias 1 e 15 de cada mês às 6h UTC (3h BRT)" >> $GITHUB_STEP_SUMMARY
+            echo "**Modo:** Cron (automático dia sim/dia não)" >> $GITHUB_STEP_SUMMARY
+            echo "**Frequência:** Dias ímpares (1,3,5,7...) às 6h UTC (3h BRT)" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -87,15 +87,10 @@ jobs:
           echo "**Run ID:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 Categorias Processadas:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Veículos:" >> $GITHUB_STEP_SUMMARY
-          echo "  - Carros" >> $GITHUB_STEP_SUMMARY
-          echo "  - Utilitários Leves" >> $GITHUB_STEP_SUMMARY
-          echo "  - Motos" >> $GITHUB_STEP_SUMMARY
-          echo "  - Ônibus" >> $GITHUB_STEP_SUMMARY
-          echo "  - Peruas" >> $GITHUB_STEP_SUMMARY
-          echo "  - Utilitários Pesados" >> $GITHUB_STEP_SUMMARY
-          echo "  - Vans Leves" >> $GITHUB_STEP_SUMMARY
-          echo "  - Caminhões" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Materiais" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Imóveis" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Sucatas" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Veículos (9 tipos)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Imóveis (6 tipos)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Materiais (20+ categorias)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Sucatas (2 índices)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Scraper:** Rápido (só cards, ~10-15min)" >> $GITHUB_STEP_SUMMARY
+          echo "**Paginação:** Até 20 páginas por categoria" >> $GITHUB_STEP_SUMMARY
