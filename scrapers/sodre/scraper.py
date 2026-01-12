@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER RÁPIDO (CATEGORIAS EXATAS DO SITE)
+SODRÉ SANTORO - SCRAPER COM INTERCEPTAÇÃO PASSIVA
+Baseado na técnica do monitor: escuta a API do site
 """
 
+import asyncio
 import sys
 import json
 import time
-import random
-import re
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
-from typing import List, Optional
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from typing import List, Dict
+from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -22,460 +22,391 @@ from normalizer import normalize_items
 
 
 class SodreScraper:
+    """Scraper Sodré com interceptação passiva da API"""
     
     def __init__(self):
         self.source = 'sodre'
         self.base_url = 'https://www.sodresantoro.com.br'
         self.leilao_base_url = 'https://leilao.sodresantoro.com.br'
         
-        # VEÍCULOS
-        self.vehicle_sections = [
-            (['caminhões'], 'veiculos', 'Caminhões', {'vehicle_type': 'caminhao'}),
-            (['utilit. pesados'], 'veiculos', 'Utilitários Pesados', {'vehicle_type': 'pesados'}),
-            (['peruas'], 'veiculos', 'Peruas', {'vehicle_type': 'perua'}),
-            (['onibus'], 'veiculos', 'Ônibus', {'vehicle_type': 'onibus'}),
-            (['implementos rod.'], 'veiculos', 'Implementos Rodoviários', {'vehicle_type': 'implemento_rodoviario'}),
-            (['van leve'], 'veiculos', 'Vans', {'vehicle_type': 'van'}),
-            (['carros', 'utilitarios leves'], 'veiculos', 'Carros', {'vehicle_type': 'carro'}),
-            (['motos'], 'veiculos', 'Motos', {'vehicle_type': 'moto'}),
-            (['embarcações'], 'veiculos', 'Embarcações', {'vehicle_type': 'barco'}),
-        ]
-        
-        # IMÓVEIS
-        self.property_sections = [
-            (['apartamento'], 'imoveis', 'Apartamentos', {'property_type': 'apartamento'}),
-            (['galpão', 'galpão industrial'], 'imoveis', 'Imóveis Industriais', {'property_type': 'galpao_industrial'}),
-            (['imóvel residencial', 'imóvel residencial com 3 edificações', 'imóvel residencial tipo sobrado'], 
-             'imoveis', 'Imóveis Residenciais', {'property_type': 'residencial'}),
-            (['lote de terreno', 'terreno urbano', 'área de terras'], 
-             'imoveis', 'Terrenos e Lotes', {'property_type': 'terreno_lote'}),
-            (['prédio comercial', 'sala comercial'], 
-             'imoveis', 'Imóveis Comerciais', {'property_type': 'comercial'}),
-            (['direitos sobre apartamento', 'direitos sobre imóvel residencial'], 
-             'imoveis', 'Direitos e Partes Ideais', {'property_type': 'outros'}),
-        ]
-        
-        # MATERIAIS - CATEGORIAS EXATAS DAS URLs REAIS
-        self.materials_sections = [
-            # MÁQUINAS PESADAS E AGRÍCOLAS
-            (['implementos agrícolas', 'terraplenagem', 'tratores'], 
-             'maquinas_pesadas_agricolas', 'Máquinas Pesadas e Agrícolas', {}),
+        # URLs para scraping (todas as categorias)
+        self.urls = [
+            # VEÍCULOS
+            f"{self.base_url}/veiculos/lotes?sort=auction_date_init_asc",
             
-            # SUCATAS - /materiais/ com filtro
-            (['sucata', 'veículos fora de estrada'], 
-             'sucatas_residuos', 'Sucatas e Resíduos (Materiais)', {}),
+            # IMÓVEIS  
+            f"{self.base_url}/imoveis/lotes?sort=auction_date_init_asc",
+            
+            # MATERIAIS (equipamentos, móveis, etc)
+            f"{self.base_url}/materiais/lotes?sort=auction_date_init_asc",
+            
+            # SUCATAS (índice próprio)
+            f"{self.base_url}/sucatas/lotes?sort=auction_date_init_asc",
+        ]
+        
+        # Mapeamento de categorias da API → tabelas do banco
+        self.category_mapping = {
+            # VEÍCULOS
+            'caminhões': ('veiculos', {'vehicle_type': 'caminhao'}),
+            'utilit. pesados': ('veiculos', {'vehicle_type': 'pesados'}),
+            'peruas': ('veiculos', {'vehicle_type': 'perua'}),
+            'onibus': ('veiculos', {'vehicle_type': 'onibus'}),
+            'implementos rod.': ('veiculos', {'vehicle_type': 'implemento_rodoviario'}),
+            'van leve': ('veiculos', {'vehicle_type': 'van'}),
+            'carros': ('veiculos', {'vehicle_type': 'carro'}),
+            'utilitarios leves': ('veiculos', {'vehicle_type': 'carro'}),
+            'motos': ('veiculos', {'vehicle_type': 'moto'}),
+            'embarcações': ('veiculos', {'vehicle_type': 'barco'}),
+            
+            # IMÓVEIS
+            'apartamento': ('imoveis', {'property_type': 'apartamento'}),
+            'galpão': ('imoveis', {'property_type': 'galpao_industrial'}),
+            'galpão industrial': ('imoveis', {'property_type': 'galpao_industrial'}),
+            'imóvel residencial': ('imoveis', {'property_type': 'residencial'}),
+            'imóvel residencial com 3 edificações': ('imoveis', {'property_type': 'residencial'}),
+            'imóvel residencial tipo sobrado': ('imoveis', {'property_type': 'residencial'}),
+            'lote de terreno': ('imoveis', {'property_type': 'terreno_lote'}),
+            'terreno urbano': ('imoveis', {'property_type': 'terreno_lote'}),
+            'área de terras': ('imoveis', {'property_type': 'terreno_lote'}),
+            'prédio comercial': ('imoveis', {'property_type': 'comercial'}),
+            'sala comercial': ('imoveis', {'property_type': 'comercial'}),
+            'direitos sobre apartamento': ('imoveis', {'property_type': 'outros'}),
+            'direitos sobre imóvel residencial': ('imoveis', {'property_type': 'outros'}),
+            
+            # MÁQUINAS E EQUIPAMENTOS
+            'implementos agrícolas': ('maquinas_pesadas_agricolas', {}),
+            'terraplenagem': ('maquinas_pesadas_agricolas', {}),
+            'tratores': ('maquinas_pesadas_agricolas', {}),
+            'eletricos': ('industrial_equipamentos', {}),
+            'empilhadeiras': ('industrial_equipamentos', {}),
+            'equip. e mat. industriais': ('industrial_equipamentos', {}),
+            'maquinas de solda': ('industrial_equipamentos', {}),
+            'móveis industriais': ('industrial_equipamentos', {}),
+            'balanças': ('industrial_equipamentos', {}),
+            
+            # CONSTRUÇÃO
+            'casa / construção': ('materiais_construcao', {'construction_material_type': 'materiais'}),
+            'ferramentas': ('materiais_construcao', {'construction_material_type': 'ferramentas'}),
+            'construção civil': ('materiais_construcao', {'construction_material_type': 'diversos'}),
+            
+            # NICHADOS
+            'equip. e mat. p/ escritório': ('nichados', {'specialized_type': 'negocios'}),
+            'academia': ('nichados', {'specialized_type': 'academia'}),
+            'bares, restaurantes e supermercados': ('nichados', {'specialized_type': 'restaurante'}),
+            'instrumentos musicais': ('nichados', {'specialized_type': 'lazer'}),
+            'lazer/esportes': ('nichados', {'specialized_type': 'lazer'}),
+            'topógrafo': ('nichados', {'specialized_type': 'lazer'}),
+            
+            # TECNOLOGIA
+            'telefonia e comunicação': ('tecnologia', {'tech_type': 'diversos'}),
+            'eletrodomesticos': ('tecnologia', {'tech_type': 'diversos'}),
+            'eletroeletrônicos': ('tecnologia', {'tech_type': 'diversos'}),
+            'informatica': ('tecnologia', {'tech_type': 'informatica'}),
+            
+            # MÓVEIS
+            'moveis para escritório': ('moveis_decoracao', {}),
+            'móveis p/ casa': ('moveis_decoracao', {}),
             
             # BENS DE CONSUMO
-            (['uso pessoal', 'materiais escolares', 'infantil', 'brinquedos'], 
-             'bens_consumo', 'Bens de Consumo', {'consumption_goods_type': 'uso_pessoal'}),
+            'uso pessoal': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
+            'materiais escolares': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
+            'infantil': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
+            'brinquedos': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
             
-            # INDUSTRIAL E EQUIPAMENTOS
-            (['eletricos', 'empilhadeiras', 'equip. e mat. industriais', 'maquinas de solda', 'móveis industriais', 'balanças'], 
-             'industrial_equipamentos', 'Industrial e Equipamentos', {}),
-            
-            # MATERIAIS DE CONSTRUÇÃO - tipo casa
-            (['casa / construção'], 
-             'materiais_construcao', 'Casa e Construção', {'construction_material_type': 'materiais'}),
-            
-            # MATERIAIS DE CONSTRUÇÃO - tipo ferramentas
-            (['ferramentas'], 
-             'materiais_construcao', 'Ferramentas', {'construction_material_type': 'ferramentas'}),
-            
-            # MATERIAIS DE CONSTRUÇÃO - tipo diversos
-            (['construção civil'], 
-             'materiais_construcao', 'Construção Civil', {'construction_material_type': 'diversos'}),
-            
-            # NICHADOS - tipo negocios
-            (['equip. e mat. p/ escritório'], 
-             'nichados', 'Equipamentos para Negócios', {'specialized_type': 'negocios'}),
-            
-            # NICHADOS - tipo academia
-            (['academia'], 
-             'nichados', 'Academia', {'specialized_type': 'academia'}),
-            
-            # NICHADOS - tipo bar-restaurante-mercado
-            (['bares, restaurantes e supermercados'], 
-             'nichados', 'Bares e Restaurantes', {'specialized_type': 'restaurante'}),
-            
-            # NICHADOS - outros
-            (['instrumentos musicais', 'lazer/esportes', 'topógrafo'], 
-             'nichados', 'Outros Nichados', {'specialized_type': 'lazer'}),
-            
-            # TECNOLOGIA - tipo diversos
-            (['telefonia e comunicação', 'eletrodomesticos', 'eletroeletrônicos'], 
-             'tecnologia', 'Tecnologia Diversos', {'tech_type': 'diversos'}),
-            
-            # TECNOLOGIA - tipo informatica
-            (['informatica'], 
-             'tecnologia', 'Informática', {'tech_type': 'informatica'}),
-            
-            # MÓVEIS E DECORAÇÃO
-            (['moveis para escritório', 'móveis p/ casa'], 
-             'moveis_decoracao', 'Móveis e Decoração', {}),
-        ]
-        
-        # SUCATAS - índice próprio (sem filtro)
-        self.sucatas_index = [
-            ([], 'sucatas_residuos', 'Sucatas (Índice)', {}),
-        ]
-        
-        self.all_sections = (
-            self.vehicle_sections + 
-            self.property_sections + 
-            self.materials_sections +
-            self.sucatas_index
-        )
+            # SUCATAS
+            'sucata': ('sucatas_residuos', {}),
+            'veículos fora de estrada': ('sucatas_residuos', {}),
+        }
         
         self.stats = {
             'total_scraped': 0,
             'by_table': defaultdict(int),
-            'by_section': {},
             'duplicates': 0,
-            'empty_sections': 0,
-            'errors': 0,
+            'unmapped_categories': set(),
         }
     
-    def _get_section_type(self, table: str) -> str:
-        """Mapeia tabela para seção do site"""
-        mapping = {
-            'veiculos': 'veiculos',
-            'imoveis': 'imoveis',
-            'sucatas_residuos': 'materiais',  # Primeiro tenta /materiais/, depois /sucatas/
-        }
-        return mapping.get(table, 'materiais')
-    
-    def _build_category_param(self, categories: List[str]) -> str:
-        """Converte lista de categorias para formato da URL"""
-        if len(categories) == 1:
-            return categories[0].replace(' ', '+')
-        else:
-            formatted = []
-            for cat in categories:
-                formatted.append(cat.replace(' ', '+'))
-            return '__'.join(formatted)
-    
-    def _build_url(self, section_type: str, categories: List[str], display_name: str) -> str:
-        """Constrói URL com filtros de categoria"""
-        # CASO ESPECIAL: Sucatas índice próprio
-        if 'Índice' in display_name:
-            return f"{self.base_url}/sucatas/lotes?sort=auction_date_init_asc"
-        
-        base = f"{self.base_url}/{section_type}/lotes"
-        
-        if not categories:
-            return f"{base}?sort=auction_date_init_asc"
-        
-        category_param = self._build_category_param(categories)
-        return f"{base}?lot_category={category_param}&sort=auction_date_init_asc"
-    
-    def scrape(self) -> dict:
+    async def scrape(self) -> dict:
+        """Scrape completo com interceptação passiva"""
         print("\n" + "="*60)
-        print("🟣 SODRÉ SANTORO - SCRAPER RÁPIDO")
+        print("🟣 SODRÉ SANTORO - INTERCEPTAÇÃO PASSIVA")
         print("="*60)
         
-        items_by_table = defaultdict(list)
-        global_ids = set()
+        all_lots = []
         
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
                 headless=True,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
-            context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            context = await browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                locale='pt-BR',
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                locale='pt-BR'
             )
             
-            page = context.new_page()
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
             
-            for lot_categories, table, display_name, extra_fields in self.all_sections:
-                print(f"\n📦 {display_name} → {table}")
-                
-                section_items = self._scrape_section(
-                    page, lot_categories, table, display_name, extra_fields, global_ids
-                )
-                
-                if len(section_items) == 0:
-                    self.stats['empty_sections'] += 1
-                
-                items_by_table[table].extend(section_items)
-                section_key = '+'.join(lot_categories) if lot_categories else f'INDEX_{table}'
-                self.stats['by_section'][section_key] = len(section_items)
-                self.stats['by_table'][table] += len(section_items)
-                
-                print(f"✅ {len(section_items)} itens → {table}")
-                time.sleep(random.uniform(2, 4))
+            page = await context.new_page()
             
-            browser.close()
+            # Função que intercepta respostas da API
+            async def intercept_response(response):
+                try:
+                    if '/api/search-lots' in response.url and response.status == 200:
+                        data = await response.json()
+                        
+                        per_page = data.get('perPage', 0)
+                        if per_page > 0:
+                            results = data.get('results', [])
+                            hits = data.get('hits', {}).get('hits', [])
+                            
+                            if results:
+                                all_lots.extend(results)
+                            elif hits:
+                                extracted = [hit.get('_source', hit) for hit in hits]
+                                all_lots.extend(extracted)
+                except:
+                    pass
+            
+            page.on('response', intercept_response)
+            
+            # Navega em todas as URLs
+            for url in self.urls:
+                section_name = url.split('/')[3]  # veiculos, imoveis, materiais, sucatas
+                print(f"\n📦 {section_name.upper()}")
+                print(f"   🌐 {url}")
+                
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=60000)
+                    await asyncio.sleep(3)
+                    
+                    # Paginação automática
+                    for page_num in range(2, 51):
+                        try:
+                            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            await asyncio.sleep(2)
+                            
+                            selectors = [
+                                'button[title="Avançar"]:not([disabled])',
+                                'button[title*="Avanç"]:not([disabled])',
+                                'button:has(.i-mdi\\:chevron-right):not([disabled])',
+                            ]
+                            
+                            clicked = False
+                            for selector in selectors:
+                                try:
+                                    button = page.locator(selector).first
+                                    if await button.count() > 0:
+                                        is_disabled = await button.get_attribute('disabled')
+                                        if is_disabled is None:
+                                            await button.click()
+                                            print(f"   ➡️  Página {page_num}...")
+                                            await asyncio.sleep(4)
+                                            clicked = True
+                                            break
+                                except:
+                                    continue
+                            
+                            if not clicked:
+                                print(f"   ✅ {page_num-1} páginas processadas")
+                                break
+                        
+                        except:
+                            break
+                
+                except Exception as e:
+                    print(f"   ⚠️ Erro: {e}")
+            
+            await browser.close()
+        
+        print(f"\n✅ {len(all_lots)} lotes capturados da API")
+        
+        # Processa lotes e agrupa por tabela
+        items_by_table = await self._process_lots(all_lots)
         
         self.stats['total_scraped'] = sum(len(items) for items in items_by_table.values())
         return items_by_table
     
-    def _scrape_section(self, page, lot_categories: List[str], table: str,
-                       display_name: str, extra_fields: dict,
-                       global_ids: set) -> List[dict]:
-        items = []
-        section_type = self._get_section_type(table)
-        url = self._build_url(section_type, lot_categories, display_name)
+    async def _process_lots(self, lots: List[Dict]) -> dict:
+        """Processa lotes da API e converte para formato do banco"""
+        print("\n📋 Processando lotes...")
         
-        print(f"  🌐 {url[:90]}...")
+        items_by_table = defaultdict(list)
+        global_ids = set()
         
-        try:
-            page.goto(url, wait_until='domcontentloaded', timeout=30000)
-            time.sleep(random.uniform(6, 8))
-            
+        for lot in lots:
             try:
-                page.wait_for_selector('a[href*="/leilao/"]', timeout=10000)
-            except:
-                print(f"  ⚪ Sem lotes encontrados")
-                return items
-            
-            # Loop de paginação
-            current_page = 1
-            max_pages = 20
-            
-            while current_page <= max_pages:
-                page_items = self._extract_lots_from_page(page, table, display_name, extra_fields, global_ids)
-                items.extend(page_items)
+                item = self._extract_lot_data(lot)
                 
-                print(f"  📄 Pág {current_page}: {len(items)} itens", flush=True)
-                
-                next_button = page.query_selector('button[title="Avançar"]:not([disabled])')
-                
-                if not next_button or current_page >= max_pages:
-                    break
-                
-                try:
-                    next_button.click()
-                    time.sleep(random.uniform(3, 5))
-                    page.wait_for_selector('a[href*="/leilao/"]', timeout=10000)
-                    time.sleep(random.uniform(2, 3))
-                    current_page += 1
-                except Exception as e:
-                    print(f"\n  ⚠️ Erro ao paginar: {str(e)[:50]}")
-                    break
-            
-        except PlaywrightTimeout:
-            print(f"  ⏱️ Timeout")
-            self.stats['errors'] += 1
-        except Exception as e:
-            print(f"  ❌ Erro: {str(e)[:50]}")
-            self.stats['errors'] += 1
-        
-        return items
-    
-    def _extract_lots_from_page(self, page, table: str, display_name: str, 
-                                extra_fields: dict, global_ids: set) -> List[dict]:
-        items = []
-        
-        try:
-            cards = page.query_selector_all('a[href*="/leilao/"][href*="/lote/"]')
-            
-            if not cards:
-                return items
-            
-            for card in cards:
-                try:
-                    item = self._extract_lot_from_card(card, table, display_name, extra_fields)
-                    
-                    if not item:
-                        continue
-                    
-                    if item['external_id'] in global_ids:
-                        self.stats['duplicates'] += 1
-                        continue
-                    
-                    items.append(item)
-                    global_ids.add(item['external_id'])
-                    
-                except Exception as e:
+                if not item:
                     continue
+                
+                # Verifica duplicata
+                if item['external_id'] in global_ids:
+                    self.stats['duplicates'] += 1
+                    continue
+                
+                # Agrupa por tabela
+                table = item['target_table']
+                items_by_table[table].append(item)
+                global_ids.add(item['external_id'])
+                self.stats['by_table'][table] += 1
+                
+            except Exception as e:
+                continue
         
-        except Exception as e:
-            pass
+        # Mostra categorias não mapeadas
+        if self.stats['unmapped_categories']:
+            print(f"\n⚠️  Categorias não mapeadas ({len(self.stats['unmapped_categories'])}):")
+            for cat in sorted(self.stats['unmapped_categories']):
+                print(f"   • {cat}")
         
-        return items
+        print(f"\n📊 Itens por tabela:")
+        for table, count in sorted(self.stats['by_table'].items()):
+            print(f"   • {table}: {count}")
+        
+        return items_by_table
     
-    def _extract_lot_from_card(self, card, table: str, display_name: str, 
-                              extra_fields: dict) -> Optional[dict]:
+    def _extract_lot_data(self, lot: Dict) -> dict:
+        """Extrai dados de um lote da API"""
         try:
-            link = card.get_attribute('href')
-            if not link:
+            # IDs
+            auction_id = lot.get('auction_id')
+            lot_id = lot.get('lot_id')
+            
+            if not auction_id or not lot_id:
                 return None
             
-            if not link.startswith('http'):
-                link = f"{self.leilao_base_url}{link}"
+            # Link (COM barra final)
+            link = f"{self.leilao_base_url}/leilao/{auction_id}/lote/{lot_id}/"
             
-            match = re.search(r'/leilao/(\d+)/lote/(\d+)', link)
-            if not match:
-                return None
+            # External ID (sem zeros à esquerda)
+            external_id = f"sodre_{int(lot_id)}"
             
-            auction_id = match.group(1)
-            lot_id = match.group(2)
-            external_id = f"sodre_{lot_id}"
+            # Categoria → Tabela
+            lot_category = (lot.get('lot_category') or '').lower().strip()
             
-            card_text = card.inner_text()
+            table_info = self.category_mapping.get(lot_category)
+            if not table_info:
+                # Tenta mapear categoria não conhecida para "diversos"
+                self.stats['unmapped_categories'].add(lot_category)
+                # Default: materiais diversos
+                table_info = ('diversos', {})
+            
+            table, extra_fields = table_info
             
             # Título
-            title = None
-            title_elem = card.query_selector('.text-body-medium')
-            if title_elem:
-                title = title_elem.inner_text().strip()
-            
+            title = lot.get('lot_title', '').strip()
             if not title or len(title) < 3:
                 return None
             
             # Valor
             value = None
             value_text = None
-            value_elem = card.query_selector('.text-primary.text-headline-small')
-            if value_elem:
-                text = value_elem.inner_text().strip()
-                match = re.search(r'([\d.,]+)', text)
-                if match:
-                    value_str = match.group(1).replace('.', '').replace(',', '.')
-                    try:
-                        value = float(value_str)
-                        value_text = f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-                    except:
-                        pass
+            bid_actual = lot.get('bid_actual')
+            if bid_actual:
+                try:
+                    value = float(bid_actual)
+                    value_text = f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+                except:
+                    pass
             
             # Localização
             city = None
             state = None
-            location_items = card.query_selector_all('li')
-            for li in location_items:
-                text = li.inner_text().strip()
-                if '/' in text and len(text) < 50:
-                    parts = text.split('/')
-                    if len(parts) == 2:
-                        city = parts[0].strip()
-                        state = parts[1].strip()
-                        break
+            lot_city = lot.get('lot_city', '')
             
-            # Número do lote
-            lot_number = None
-            auction_info = card.query_selector('.text-label-small')
-            if auction_info:
-                text = auction_info.inner_text().strip()
-                match = re.search(r'-\s*(\d+)', text)
-                if match:
-                    lot_number = match.group(1)
+            if '/' in lot_city:
+                parts = lot_city.split('/')
+                city = parts[0].strip()
+                state = parts[1].strip() if len(parts) > 1 else None
+            elif lot_city:
+                city = lot_city.strip()
+            
+            # Data do leilão
+            auction_date = None
+            date_str = lot.get('auction_date_init')
+            if date_str:
+                try:
+                    # Formato esperado: "2026-01-15" ou "2026-01-15T10:00:00"
+                    auction_date = date_str.split('T')[0]  # Pega só a data
+                except:
+                    pass
             
             # Comitente
-            store_name = None
-            store_elem = card.query_selector('.text-body-small.text-on-surface-variant.uppercase.line-clamp-1')
-            if store_elem:
-                store_name = store_elem.inner_text().strip()
-                if not store_name or len(store_name) <= 2:
-                    store_name = None
+            store_name = lot.get('auction_auctioneer', '').strip()
+            if not store_name or len(store_name) <= 2:
+                store_name = None
             
-            # Data
-            auction_date = None
-            date_elem = card.query_selector('.text-body-small.line-clamp-1')
-            if date_elem:
-                date_text = date_elem.inner_text().strip()
-                date_match = re.search(r'(\d{2})/(\d{2})/(\d{2})', date_text)
-                if date_match:
-                    day, month, year = date_match.groups()
-                    year = f"20{year}"
-                    auction_date = f"{year}-{month}-{day}"
+            # Número do lote
+            lot_number = lot.get('lot_number', '').strip()
             
-            # Visitas
-            total_visits = 0
-            visits_elem = card.query_selector('.inline-flex.items-center.gap-x-1.text-label-small')
-            if visits_elem:
-                visits_text = visits_elem.inner_text().strip()
-                visits_match = re.search(r'(\d+)', visits_text)
-                if visits_match:
-                    try:
-                        total_visits = int(visits_match.group(1))
-                    except:
-                        pass
+            # Estatísticas
+            total_visits = int(lot.get('lot_visits') or 0)
+            has_bid = lot.get('bid_has_bid', False)
             
             # Metadata
             metadata = {
-                'secao_site': display_name,
-                'leilao_id': auction_id,
+                'secao_site': lot_category,
+                'leilao_id': str(auction_id),
             }
-            
-            # Categoria
-            list_items = card.query_selector_all('li span.line-clamp-1.text-body-small')
-            if list_items and len(list_items) > 0:
-                categoria_lote = list_items[0].inner_text().strip()
-                if categoria_lote and len(categoria_lote) > 2:
-                    metadata['categoria_lote'] = categoria_lote
             
             # Marca/modelo/ano (veículos e sucatas)
             if table == 'veiculos' or table == 'sucatas_residuos':
-                for span in list_items:
-                    text = span.inner_text().strip().lower()
-                    if '-' in text and '/' not in text:
-                        marca = text.replace('-', '').strip()
-                        if marca:
-                            metadata['marca'] = marca
-                            break
+                brand = lot.get('lot_brand', '').strip()
+                model = lot.get('lot_model', '').strip()
+                year = lot.get('lot_year', '').strip()
                 
-                brand_match = re.search(r'([A-Z][A-Z\s]+?)\s+([A-Z0-9][A-Z0-9\s/-]+?)\s+(\d{2}/\d{2}|\d{4})', title.upper())
-                if brand_match:
-                    if 'marca' not in metadata:
-                        metadata['marca'] = brand_match.group(1).strip()
-                    metadata['modelo'] = brand_match.group(2).strip()
-                    year_str = brand_match.group(3)
-                    if '/' in year_str:
-                        metadata['ano_modelo'] = year_str.split('/')[0]
-                    else:
-                        metadata['ano_modelo'] = year_str
+                if brand:
+                    metadata['marca'] = brand
+                if model:
+                    metadata['modelo'] = model
+                if year:
+                    metadata['ano_modelo'] = year
             
             # Área (imóveis)
             if table == 'imoveis':
-                area_match = re.search(r'(\d+(?:[.,]\d+)?)\s*m[²2]', card_text)
-                if area_match:
-                    area_str = area_match.group(1).replace(',', '.')
+                area = lot.get('lot_area')
+                if area:
                     try:
-                        metadata['area_total'] = float(area_str)
+                        metadata['area_total'] = float(area)
                     except:
                         pass
             
-            # Marca (outros)
-            if table not in ['veiculos', 'imoveis', 'sucatas_residuos']:
-                for span in list_items:
-                    text = span.inner_text().strip().lower()
-                    if '-' in text and '/' not in text and len(text) < 30:
-                        marca = text.replace('-', '').strip()
-                        if marca:
-                            metadata['marca'] = marca
-                            break
+            # Remove valores None do metadata
+            metadata = {k: v for k, v in metadata.items() if v}
             
-            metadata = {k: v for k, v in metadata.items() if v is not None}
-            
+            # Monta item
             item = {
                 'source': 'sodre',
                 'external_id': external_id,
                 'title': title,
-                'description': None,
+                'description': lot.get('lot_description', ''),
                 'value': value,
                 'value_text': value_text,
                 'city': city,
                 'state': state,
                 'link': link,
                 'target_table': table,
+                
                 'auction_date': auction_date,
                 'auction_type': 'Leilão',
                 'auction_name': None,
                 'store_name': store_name,
                 'lot_number': lot_number,
+                
                 'total_visits': total_visits,
-                'total_bids': 0,
-                'total_bidders': 0,
-                'auction_round': None,
-                'discount_percentage': None,
-                'first_round_value': None,
+                'total_bids': 1 if has_bid else 0,
+                'total_bidders': 1 if has_bid else 0,
+                
                 'metadata': metadata,
             }
             
+            # Adiciona campos extras (vehicle_type, property_type, etc)
             if extra_fields:
                 item.update(extra_fields)
             
@@ -485,30 +416,35 @@ class SodreScraper:
             return None
 
 
-def main():
+async def main():
+    """Execução principal"""
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER RÁPIDO")
+    print("🚀 SODRÉ SANTORO - SCRAPER COM INTERCEPTAÇÃO PASSIVA")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
     
     start_time = time.time()
     
+    # ========================================
+    # FASE 1: SCRAPE
+    # ========================================
     print("\n🔥 FASE 1: COLETANDO DADOS")
     scraper = SodreScraper()
-    items_by_table = scraper.scrape()
+    items_by_table = await scraper.scrape()
     
     total_items = sum(len(items) for items in items_by_table.values())
     
     print(f"\n✅ Total coletado: {total_items} itens")
     print(f"🔄 Duplicatas: {scraper.stats['duplicates']}")
-    print(f"⚪ Seções vazias: {scraper.stats['empty_sections']}")
-    print(f"❌ Erros: {scraper.stats['errors']}")
     
     if not total_items:
         print("⚠️ Nenhum item coletado")
         return
     
+    # ========================================
+    # FASE 2: NORMALIZAÇÃO
+    # ========================================
     print("\n✨ FASE 2: NORMALIZANDO DADOS")
     
     normalized_by_table = {}
@@ -525,6 +461,7 @@ def main():
             print(f"  ⚠️ Erro em {table}: {e}")
             normalized_by_table[table] = items
     
+    # Salva JSON
     output_dir = Path(__file__).parent / 'data' / 'normalized'
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -534,7 +471,10 @@ def main():
         json.dump(normalized_by_table, f, ensure_ascii=False, indent=2)
     print(f"💾 JSON: {json_file}")
     
-    print("\n📤 FASE 3: SUPABASE")
+    # ========================================
+    # FASE 3: SUPABASE
+    # ========================================
+    print("\n📤 FASE 3: INSERINDO NO SUPABASE")
     
     try:
         supabase = SupabaseClient()
@@ -560,24 +500,33 @@ def main():
                 total_inserted += stats['inserted']
                 total_updated += stats['updated']
             
-            print(f"\n  ✅ Total inseridos: {total_inserted}")
-            print(f"  🔄 Total atualizados: {total_updated}")
+            print(f"\n  📈 TOTAL:")
+            print(f"    ✅ Inseridos: {total_inserted}")
+            print(f"    🔄 Atualizados: {total_updated}")
     
     except Exception as e:
         print(f"⚠️ Erro Supabase: {e}")
     
+    # ========================================
+    # ESTATÍSTICAS FINAIS
+    # ========================================
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
     
     print("\n" + "="*70)
-    print("📊 ESTATÍSTICAS")
+    print("📊 ESTATÍSTICAS FINAIS")
     print("="*70)
+    print(f"🟣 Sodré Santoro - Interceptação Passiva:")
+    print(f"\n  Por Tabela:")
     for table, count in sorted(scraper.stats['by_table'].items()):
-        print(f"  • {table}: {count}")
+        print(f"    • {table}: {count}")
+    print(f"\n  • Total coletado: {scraper.stats['total_scraped']}")
+    print(f"  • Duplicatas: {scraper.stats['duplicates']}")
     print(f"\n⏱️ Duração: {minutes}min {seconds}s")
+    print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
