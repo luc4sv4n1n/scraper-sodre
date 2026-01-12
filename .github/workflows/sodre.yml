@@ -54,7 +54,7 @@ jobs:
           echo "========================================"
           
           cd scrapers/sodre
-          python sodre_scraper_rapido.py
+          python scraper.py
           
           echo ""
           echo "✅ Sodré concluído: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
