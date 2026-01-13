@@ -98,7 +98,7 @@ class SupabaseClient:
         standard_fields = {
             'source', 'external_id', 'title', 'normalized_title', 'description_preview',
             'description', 'value', 'value_text', 'city', 'state', 'address',
-            'auction_date', 'days_remaining', 'auction_type', 'auction_name',
+            'auction_date', 'auction_type', 'auction_name',
             'store_name', 'lot_number', 'total_visits', 'total_bids', 'total_bidders',
             'link', 'metadata', 'duplicate_group', 'is_primary_duplicate',
             'is_active', 'created_at', 'updated_at', 'last_scraped_at',
@@ -197,7 +197,6 @@ class SupabaseClient:
             'state': state,
             'address': str(item.get('address')) if item.get('address') else None,
             'auction_date': auction_date,
-            'days_remaining': int(item.get('days_remaining', 0)) if item.get('days_remaining') is not None else None,
             'auction_type': str(item.get('auction_type', 'Leilão'))[:100],
             'auction_name': str(item.get('auction_name')) if item.get('auction_name') else None,
             'store_name': str(item.get('store_name')) if item.get('store_name') else None,
