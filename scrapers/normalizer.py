@@ -3,6 +3,7 @@
 """
 NORMALIZER FORTALECIDO - Limpeza Avançada de Dados
 ✅ FIX: Aceita formato PostgreSQL timestamptz (Superbid e Sodré)
+✅ FIX: Removido days_remaining (coluna deletada do banco)
 """
 
 import re
@@ -68,9 +69,8 @@ class UniversalNormalizer:
             'state': self._validate_state(item.get('state')),
             'address': self._clean_address(item.get('address')),
             
-            # ✅ LEILÃO - COM VALIDAÇÃO CORRIGIDA
+            # ✅ LEILÃO - SEM days_remaining
             'auction_date': self._parse_date(item.get('auction_date')),
-            'days_remaining': self._parse_days_remaining(item.get('days_remaining')),
             'auction_type': self._clean_text(item.get('auction_type'), 'Leilão'),
             'auction_name': self._clean_text(item.get('auction_name')),
             'store_name': self._clean_text(item.get('store_name')),
@@ -326,19 +326,6 @@ class UniversalNormalizer:
             return date_clean
         
         return None
-    
-    def _parse_days_remaining(self, days) -> Optional[int]:
-        """Parse dias restantes"""
-        if days is None:
-            return None
-        
-        try:
-            days_int = int(days)
-            if days_int < 0:
-                return 0
-            return days_int
-        except:
-            return None
     
     def _clean_text(self, text: Optional[str], default: Optional[str] = None) -> Optional[str]:
         """Limpa texto"""

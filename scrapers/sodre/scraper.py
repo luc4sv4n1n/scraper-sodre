@@ -3,6 +3,7 @@
 """
 SODRÉ SANTORO - SCRAPER COM INTERCEPTAÇÃO PASSIVA
 Baseado na técnica do monitor: escuta a API do site
+✅ Mapeamento corrigido: veículos → veiculos, sucatas → sucatas_residuos
 """
 
 import asyncio
@@ -46,11 +47,14 @@ class SodreScraper:
         
         # Mapeamento de categorias da API → tabelas do banco
         self.category_mapping = {
-            # VEÍCULOS
+            # ========================================
+            # VEÍCULOS - TODOS VÃO PARA veiculos
+            # ========================================
             'caminhões': ('veiculos', {'vehicle_type': 'caminhao'}),
             'utilit. pesados': ('veiculos', {'vehicle_type': 'pesados'}),
             'peruas': ('veiculos', {'vehicle_type': 'perua'}),
             'onibus': ('veiculos', {'vehicle_type': 'onibus'}),
+            'ônibus': ('veiculos', {'vehicle_type': 'onibus'}),
             'implementos rod.': ('veiculos', {'vehicle_type': 'implemento_rodoviario'}),
             'van leve': ('veiculos', {'vehicle_type': 'van'}),
             'carros': ('veiculos', {'vehicle_type': 'carro'}),
@@ -58,64 +62,126 @@ class SodreScraper:
             'motos': ('veiculos', {'vehicle_type': 'moto'}),
             'embarcações': ('veiculos', {'vehicle_type': 'barco'}),
             
+            # ========================================
             # IMÓVEIS
+            # ========================================
             'apartamento': ('imoveis', {'property_type': 'apartamento'}),
+            'apartamentos': ('imoveis', {'property_type': 'apartamento'}),
             'galpão': ('imoveis', {'property_type': 'galpao_industrial'}),
             'galpão industrial': ('imoveis', {'property_type': 'galpao_industrial'}),
             'imóvel residencial': ('imoveis', {'property_type': 'residencial'}),
+            'imóveis residenciais': ('imoveis', {'property_type': 'residencial'}),
             'imóvel residencial com 3 edificações': ('imoveis', {'property_type': 'residencial'}),
             'imóvel residencial tipo sobrado': ('imoveis', {'property_type': 'residencial'}),
             'lote de terreno': ('imoveis', {'property_type': 'terreno_lote'}),
             'terreno urbano': ('imoveis', {'property_type': 'terreno_lote'}),
+            'terrenos e lotes': ('imoveis', {'property_type': 'terreno_lote'}),
             'área de terras': ('imoveis', {'property_type': 'terreno_lote'}),
+            'gleba de terra': ('imoveis', {'property_type': 'terreno_lote'}),
             'prédio comercial': ('imoveis', {'property_type': 'comercial'}),
             'sala comercial': ('imoveis', {'property_type': 'comercial'}),
+            'imóveis comerciais': ('imoveis', {'property_type': 'comercial'}),
+            'imóveis industriais': ('imoveis', {'property_type': 'galpao_industrial'}),
+            'galpões comerciais e residência': ('imoveis', {'property_type': 'misto'}),
+            'complexo residencial e de lazer': ('imoveis', {'property_type': 'residencial'}),
             'direitos sobre apartamento': ('imoveis', {'property_type': 'outros'}),
             'direitos sobre imóvel residencial': ('imoveis', {'property_type': 'outros'}),
+            'direitos sobre terreno': ('imoveis', {'property_type': 'outros'}),
+            'direitos sobre unidade autônoma': ('imoveis', {'property_type': 'outros'}),
+            'parte ideal de 1/6 sobre imóvel residencial': ('imoveis', {'property_type': 'outros'}),
+            'parte ideal de 50% sobre lote de terreno': ('imoveis', {'property_type': 'outros'}),
+            'parte ideal de 50% sobre nua-propriedade': ('imoveis', {'property_type': 'outros'}),
+            'direitos e partes ideais': ('imoveis', {'property_type': 'outros'}),
             
+            # ========================================
             # MÁQUINAS E EQUIPAMENTOS
+            # ========================================
             'implementos agrícolas': ('maquinas_pesadas_agricolas', {}),
             'terraplenagem': ('maquinas_pesadas_agricolas', {}),
             'tratores': ('maquinas_pesadas_agricolas', {}),
             'eletricos': ('industrial_equipamentos', {}),
+            'elétricos': ('industrial_equipamentos', {}),
             'empilhadeiras': ('industrial_equipamentos', {}),
             'equip. e mat. industriais': ('industrial_equipamentos', {}),
+            'equipamentos industriais': ('industrial_equipamentos', {}),
             'maquinas de solda': ('industrial_equipamentos', {}),
+            'máquinas de solda': ('industrial_equipamentos', {}),
             'móveis industriais': ('industrial_equipamentos', {}),
             'balanças': ('industrial_equipamentos', {}),
+            'metrologia': ('industrial_equipamentos', {}),
             
+            # ========================================
+            # ELETRODOMÉSTICOS
+            # ========================================
+            'ar condicionado': ('eletrodomesticos', {'appliance_type': 'climatizacao'}),
+            'hidraulicos': ('eletrodomesticos', {'appliance_type': 'hidraulicos'}),
+            'eletrodomesticos': ('eletrodomesticos', {'appliance_type': 'diversos'}),
+            'eletrodomésticos': ('eletrodomesticos', {'appliance_type': 'diversos'}),
+            
+            # ========================================
             # CONSTRUÇÃO
+            # ========================================
             'casa / construção': ('materiais_construcao', {'construction_material_type': 'materiais'}),
+            'casa e construção': ('materiais_construcao', {'construction_material_type': 'materiais'}),
             'ferramentas': ('materiais_construcao', {'construction_material_type': 'ferramentas'}),
             'construção civil': ('materiais_construcao', {'construction_material_type': 'diversos'}),
             
+            # ========================================
             # NICHADOS
+            # ========================================
             'equip. e mat. p/ escritório': ('nichados', {'specialized_type': 'negocios'}),
+            'equipamentos para escritório': ('nichados', {'specialized_type': 'negocios'}),
             'academia': ('nichados', {'specialized_type': 'academia'}),
             'bares, restaurantes e supermercados': ('nichados', {'specialized_type': 'restaurante'}),
+            'bares': ('nichados', {'specialized_type': 'restaurante'}),
+            'restaurantes': ('nichados', {'specialized_type': 'restaurante'}),
             'instrumentos musicais': ('nichados', {'specialized_type': 'lazer'}),
             'lazer/esportes': ('nichados', {'specialized_type': 'lazer'}),
-            'topógrafo': ('nichados', {'specialized_type': 'lazer'}),
+            'lazer e esportes': ('nichados', {'specialized_type': 'lazer'}),
+            'topógrafo': ('nichados', {'specialized_type': 'profissional'}),
+            'estética': ('nichados', {'specialized_type': 'saude_beleza'}),
+            'hospitalar': ('nichados', {'specialized_type': 'saude_beleza'}),
+            'lavanderia': ('nichados', {'specialized_type': 'servicos'}),
             
+            # ========================================
             # TECNOLOGIA
-            'telefonia e comunicação': ('tecnologia', {'tech_type': 'diversos'}),
-            'eletrodomesticos': ('tecnologia', {'tech_type': 'diversos'}),
-            'eletroeletrônicos': ('tecnologia', {'tech_type': 'diversos'}),
+            # ========================================
+            'telefonia e comunicação': ('tecnologia', {'tech_type': 'telefonia'}),
+            'telefonia': ('tecnologia', {'tech_type': 'telefonia'}),
+            'eletroeletrônicos': ('tecnologia', {'tech_type': 'eletronicos'}),
+            'eletrônicos': ('tecnologia', {'tech_type': 'eletronicos'}),
             'informatica': ('tecnologia', {'tech_type': 'informatica'}),
+            'informática': ('tecnologia', {'tech_type': 'informatica'}),
+            'câmeras e filmadoras': ('tecnologia', {'tech_type': 'foto_video'}),
+            'áudio, vídeo e iluminação': ('tecnologia', {'tech_type': 'audiovisual'}),
             
+            # ========================================
             # MÓVEIS
+            # ========================================
             'moveis para escritório': ('moveis_decoracao', {}),
-            'móveis p/ casa': ('moveis_decoracao', {}),
+            'móveis para escritório': ('moveis_decoracao', {}),
+            'móveis para casa': ('moveis_decoracao', {}),
+            'móveis escolares': ('moveis_decoracao', {}),
+            'móveis para comércio': ('moveis_decoracao', {}),
             
+            # ========================================
             # BENS DE CONSUMO
+            # ========================================
             'uso pessoal': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
             'materiais escolares': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
             'infantil': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
             'brinquedos': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
             
-            # SUCATAS
+            # ========================================
+            # SUCATAS - SEÇÃO /sucatas/
+            # ========================================
             'sucata': ('sucatas_residuos', {}),
             'veículos fora de estrada': ('sucatas_residuos', {}),
+            
+            # ========================================
+            # DIVERSOS - CATCH-ALL
+            # ========================================
+            'diversos': ('diversos', {}),
         }
         
         self.stats = {
@@ -287,22 +353,27 @@ class SodreScraper:
             # External ID (sem zeros à esquerda)
             external_id = f"sodre_{int(lot_id)}"
             
-            # Categoria → Tabela
-            lot_category = (lot.get('lot_category') or '').lower().strip()
-            
-            table_info = self.category_mapping.get(lot_category)
-            if not table_info:
-                # Tenta mapear categoria não conhecida para "diversos"
-                self.stats['unmapped_categories'].add(lot_category)
-                # Default: materiais diversos
-                table_info = ('diversos', {})
-            
-            table, extra_fields = table_info
-            
             # Título
             title = lot.get('lot_title', '').strip()
             if not title or len(title) < 3:
                 return None
+            
+            # ✅ REGRA ESPECIAL: Se título contém "SUCATA", vai para sucatas_residuos
+            title_upper = title.upper()
+            if 'SUCATA' in title_upper or 'SUCATAS' in title_upper:
+                table = 'sucatas_residuos'
+                extra_fields = {}
+            else:
+                # Categoria → Tabela
+                lot_category = (lot.get('lot_category') or '').lower().strip()
+                
+                table_info = self.category_mapping.get(lot_category)
+                if not table_info:
+                    # Não mapeado → diversos
+                    self.stats['unmapped_categories'].add(lot_category)
+                    table_info = ('diversos', {})
+                
+                table, extra_fields = table_info
             
             # Valor
             value = None
@@ -351,7 +422,7 @@ class SodreScraper:
             
             # Metadata
             metadata = {
-                'secao_site': lot_category,
+                'secao_site': lot.get('lot_category', '').strip(),
                 'leilao_id': str(auction_id),
             }
             
