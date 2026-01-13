@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-NORMALIZER FORTALECIDO - Limpeza Avançada de Dados
-✅ FIX: Aceita formato PostgreSQL timestamptz (Superbid e Sodré)
-✅ FIX: Removido days_remaining (coluna deletada do banco)
+NORMALIZER SIMPLIFICADO - has_bid (boolean)
+✅ REMOVIDO: total_bids, total_bidders, total_visits
+✅ Apenas campos essenciais
 """
 
 import re
@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 
 
 class UniversalNormalizer:
-    """Normalizador com limpeza avançada e captura de metadados"""
+    """Normalizador simplificado com has_bid"""
     
     VALID_STATES = [
         'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
@@ -66,22 +66,20 @@ class UniversalNormalizer:
             'state': self._validate_state(item.get('state')),
             'address': self._clean_address(item.get('address')),
             
-            # ✅ LEILÃO
+            # Leilão
             'auction_date': self._parse_date(item.get('auction_date')),
             'auction_type': self._clean_text(item.get('auction_type'), 'Leilão'),
             'auction_name': self._clean_text(item.get('auction_name')),
             'store_name': self._clean_text(item.get('store_name')),
             'lot_number': self._clean_text(item.get('lot_number')),
             
-            # Estatísticas
-            'total_visits': self._parse_int(item.get('total_visits'), 0),
-            'total_bids': self._parse_int(item.get('total_bids'), 0),
-            'total_bidders': self._parse_int(item.get('total_bidders'), 0),
+            # ✅ HAS_BID (boolean) - CAMPO ÚNICO DE LANCE
+            'has_bid': bool(item.get('has_bid', False)),
             
             # Link
             'link': item.get('link'),
             
-            # Campos especiais (todos os tipos)
+            # Campos especiais
             'vehicle_type': item.get('vehicle_type'),
             'property_type': item.get('property_type'),
             'animal_type': item.get('animal_type'),
@@ -299,10 +297,10 @@ class UniversalNormalizer:
     
     def _parse_date(self, date_str: Optional[str]) -> Optional[str]:
         """
-        ✅ FIX: Valida e aceita múltiplos formatos de data/timestamp
+        Valida e aceita múltiplos formatos de data/timestamp
         
         Aceita:
-        - PostgreSQL: "2026-01-12 09:30:00" (Superbid e Sodré)
+        - PostgreSQL: "2026-01-12 09:30:00"
         - ISO com T: "2026-01-12T09:30:00"
         - Com timezone: "2026-01-12 09:30:00-03"
         - Apenas data: "2026-01-12"
@@ -316,7 +314,6 @@ class UniversalNormalizer:
             return None
         
         # Regex: YYYY-MM-DD com ou sem timestamp
-        # Aceita espaço OU T entre data e hora
         date_pattern = r'\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2})?'
         
         if re.match(date_pattern, date_clean):
@@ -341,16 +338,6 @@ class UniversalNormalizer:
             clean = clean[:197] + '...'
         
         return clean
-    
-    def _parse_int(self, value, default: int = 0) -> int:
-        """Parse inteiro"""
-        if value is None:
-            return default
-        
-        try:
-            return int(value)
-        except:
-            return default
     
     def _build_metadata(self, item: dict) -> dict:
         """Build metadata"""
