@@ -47,7 +47,7 @@ class SupabaseClient:
                 if db_item:
                     prepared.append(db_item)
             except Exception as e:
-                print(f"  ⚠️ Erro ao preparar item: {e}")
+                print(f" ⚠️ Erro ao preparar item: {e}")
         
         if not prepared:
             print("  ⚠️ Nenhum item válido para inserir")
@@ -100,12 +100,9 @@ class SupabaseClient:
             'description', 'value', 'value_text', 'city', 'state', 'address',
             'auction_date', 'auction_type', 'auction_name',
             'store_name', 'lot_number', 'total_visits', 'total_bids', 'total_bidders',
-            'link', 'metadata', 'duplicate_group', 'is_primary_duplicate',
-            'is_active', 'created_at', 'updated_at', 'last_scraped_at',
-            'market_price', 'market_price_source', 'market_price_updated_at',
-            'market_price_confidence', 'market_price_metadata',
-            # ✅ Novos campos de praça
-            'auction_round', 'discount_percentage', 'first_round_value', 'first_round_date'
+            'link', 'metadata', 'is_active', 'created_at', 'updated_at', 'last_scraped_at',
+            # ✅ Campo de praça
+            'auction_round'
         }
         
         # Campos específicos por tabela
@@ -208,11 +205,8 @@ class SupabaseClient:
             'metadata': metadata,
             'is_active': True,
             'last_scraped_at': datetime.now().isoformat(),
-            # ✅ Informações de praça
+            # ✅ Informação de praça
             'auction_round': int(item.get('auction_round')) if item.get('auction_round') is not None else None,
-            'discount_percentage': float(item.get('discount_percentage')) if item.get('discount_percentage') is not None else None,
-            'first_round_value': float(item.get('first_round_value')) if item.get('first_round_value') is not None else None,
-            'first_round_date': str(item.get('first_round_date')) if item.get('first_round_date') else None,
         }
         
         # ✅ Campos específicos por tabela

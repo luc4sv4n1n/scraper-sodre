@@ -58,18 +58,15 @@ class UniversalNormalizer:
             'value': self._parse_value(item.get('value')),
             'value_text': item.get('value_text'),
             
-            # Informações de praça
+            # Informação de praça
             'auction_round': item.get('auction_round'),
-            'discount_percentage': item.get('discount_percentage'),
-            'first_round_value': self._parse_value(item.get('first_round_value')),
-            'first_round_date': item.get('first_round_date'),
             
             # Localização
             'city': self._clean_city(item.get('city')),
             'state': self._validate_state(item.get('state')),
             'address': self._clean_address(item.get('address')),
             
-            # ✅ LEILÃO - SEM days_remaining
+            # ✅ LEILÃO
             'auction_date': self._parse_date(item.get('auction_date')),
             'auction_type': self._clean_text(item.get('auction_type'), 'Leilão'),
             'auction_name': self._clean_text(item.get('auction_name')),
