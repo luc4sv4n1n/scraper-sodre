@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT SIMPLIFICADO - has_bid (boolean)
-✅ REMOVIDO: total_bids, total_bidders, total_visits
-✅ Apenas campos essenciais
+SUPABASE CLIENT - SODRÉ ITEMS
+✅ Mapeamento direto para tabela sodre_items
+✅ Sem normalização - campos diretos
 """
 
 import os
@@ -13,7 +13,7 @@ from datetime import datetime
 
 
 class SupabaseClient:
-    """Cliente para Supabase - Schema auctions (SIMPLIFICADO)"""
+    """Cliente para Supabase - Tabela sodre_items"""
     
     def __init__(self):
         self.url = os.getenv('SUPABASE_URL')
@@ -37,34 +37,27 @@ class SupabaseClient:
         self.session.headers.update(self.headers)
     
     def upsert(self, tabela: str, items: list) -> dict:
-        """Upsert com suporte a campos específicos por tabela"""
+        """Upsert na tabela sodre_items"""
         if not items:
             return {'inserted': 0, 'updated': 0, 'errors': 0}
         
-        prepared = []
+        # Atualiza last_scraped_at
+        now = datetime.now().isoformat()
         for item in items:
-            try:
-                db_item = self._prepare(item, tabela)
-                if db_item:
-                    prepared.append(db_item)
-            except Exception as e:
-                print(f" ⚠️ Erro ao preparar item: {e}")
-        
-        if not prepared:
-            print("  ⚠️ Nenhum item válido para inserir")
-            return {'inserted': 0, 'updated': 0, 'errors': 0}
-        
-        # Normaliza chaves do batch
-        prepared = self._normalize_batch_keys(prepared, tabela)
+            item['last_scraped_at'] = now
+            if 'created_at' not in item:
+                item['created_at'] = now
+            if 'updated_at' not in item:
+                item['updated_at'] = now
         
         stats = {'inserted': 0, 'updated': 0, 'errors': 0}
         batch_size = 500
-        total_batches = (len(prepared) + batch_size - 1) // batch_size
+        total_batches = (len(items) + batch_size - 1) // batch_size
         
         url = f"{self.url}/rest/v1/{tabela}"
         
-        for i in range(0, len(prepared), batch_size):
-            batch = prepared[i:i+batch_size]
+        for i in range(0, len(items), batch_size):
+            batch = items[i:i+batch_size]
             batch_num = (i // batch_size) + 1
             
             try:
@@ -78,7 +71,8 @@ class SupabaseClient:
                     print(f"  🔄 Batch {batch_num}/{total_batches}: {len(batch)} atualizados")
                 else:
                     error_msg = r.text[:200] if r.text else 'Sem detalhes'
-                    print(f"  ❌ Batch {batch_num}: HTTP {r.status_code} - {error_msg}")
+                    print(f"  ❌ Batch {batch_num}: HTTP {r.status_code}")
+                    print(f"     {error_msg}")
                     stats['errors'] += len(batch)
             
             except Exception as e:
@@ -89,207 +83,6 @@ class SupabaseClient:
                 time.sleep(0.5)
         
         return stats
-    
-    def _normalize_batch_keys(self, items: list, tabela: str = '') -> list:
-        """Garante que todos os itens tenham apenas campos válidos"""
-        if not items:
-            return items
-        
-        # ✅ Campos padrão (SIMPLIFICADO - SEM total_bids, total_bidders, total_visits)
-        standard_fields = {
-            'source', 'external_id', 'title', 'normalized_title', 'description_preview',
-            'description', 'value', 'value_text', 'city', 'state', 'address',
-            'auction_date', 'auction_type', 'auction_name',
-            'store_name', 'lot_number',
-            'link', 'metadata', 'is_active', 'created_at', 'updated_at', 'last_scraped_at',
-            'auction_round',
-            'has_bid',  # ✅ Campo único de lance
-        }
-        
-        # Campos específicos por tabela
-        table_specific_fields = {
-            'veiculos': {'vehicle_type'},
-            'imoveis': {'property_type'},
-            'animais': {'animal_type'},
-            'tecnologia': {'multiplecategory', 'tech_type'},
-            'bens_consumo': {'consumption_goods_type'},
-            'partes_pecas': {'parts_type'},
-            'nichados': {'specialized_type'},
-            'eletrodomesticos': {'appliance_type'},
-            'materiais_construcao': {'construction_material_type'},
-        }
-        
-        # Campos permitidos
-        allowed_fields = standard_fields.copy()
-        if tabela in table_specific_fields:
-            allowed_fields.update(table_specific_fields[tabela])
-        
-        # Coleta chaves válidas
-        all_keys = set()
-        for item in items:
-            for key in item.keys():
-                if key in allowed_fields:
-                    all_keys.add(key)
-        
-        # Normaliza cada item
-        normalized = []
-        for item in items:
-            normalized_item = {}
-            for key in all_keys:
-                normalized_item[key] = item.get(key, None)
-            normalized.append(normalized_item)
-        
-        return normalized
-    
-    def _prepare(self, item: dict, tabela: str = '') -> dict:
-        """Prepara item para inserção no banco"""
-        source = item.get('source')
-        external_id = item.get('external_id')
-        title = item.get('title') or 'Sem Título'
-        
-        if not source or not external_id:
-            return None
-        
-        # Processa auction_date
-        auction_date = item.get('auction_date')
-        if auction_date and isinstance(auction_date, str):
-            try:
-                auction_date = auction_date.replace('Z', '+00:00')
-                dt = datetime.fromisoformat(auction_date)
-                auction_date = dt.isoformat()
-            except:
-                auction_date = None
-        
-        # Valida state
-        state = item.get('state')
-        if state:
-            state = str(state).strip().upper()
-            if len(state) != 2:
-                state = None
-        
-        # Processa value
-        value = item.get('value')
-        if value is not None:
-            try:
-                value = float(value)
-                if value < 0:
-                    value = None
-            except:
-                value = None
-        
-        metadata = item.get('metadata', {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        
-        # ✅ Campos padrão (SIMPLIFICADO)
-        data = {
-            'source': str(source),
-            'external_id': str(external_id),
-            'title': str(title)[:255],
-            'normalized_title': str(item.get('normalized_title') or title)[:255],
-            'description_preview': str(item.get('description_preview', ''))[:255] if item.get('description_preview') else None,
-            'description': str(item.get('description')) if item.get('description') else None,
-            'value': value,
-            'value_text': str(item.get('value_text')) if item.get('value_text') else None,
-            'city': str(item.get('city')) if item.get('city') else None,
-            'state': state,
-            'address': str(item.get('address')) if item.get('address') else None,
-            'auction_date': auction_date,
-            'auction_type': str(item.get('auction_type', 'Leilão'))[:100],
-            'auction_name': str(item.get('auction_name')) if item.get('auction_name') else None,
-            'store_name': str(item.get('store_name')) if item.get('store_name') else None,
-            'lot_number': str(item.get('lot_number')) if item.get('lot_number') else None,
-            'link': str(item.get('link')) if item.get('link') else None,
-            'metadata': metadata,
-            'is_active': True,
-            'last_scraped_at': datetime.now().isoformat(),
-            'auction_round': int(item.get('auction_round')) if item.get('auction_round') is not None else None,
-            
-            # ✅ HAS_BID (boolean único)
-            'has_bid': bool(item.get('has_bid', False)),
-        }
-        
-        # ✅ Campos específicos por tabela
-        if tabela == 'veiculos':
-            vehicle_type = item.get('vehicle_type')
-            if not vehicle_type and isinstance(metadata, dict):
-                vehicle_type = metadata.get('vehicle_type')
-            
-            if vehicle_type:
-                data['vehicle_type'] = str(vehicle_type)[:255]
-        
-        if tabela == 'imoveis':
-            property_type = item.get('property_type')
-            if not property_type and isinstance(metadata, dict):
-                property_type = metadata.get('property_type')
-            
-            if property_type:
-                data['property_type'] = str(property_type)[:255]
-        
-        if tabela == 'animais':
-            animal_type = item.get('animal_type')
-            if not animal_type and isinstance(metadata, dict):
-                animal_type = metadata.get('animal_type')
-            
-            if animal_type:
-                data['animal_type'] = str(animal_type)[:255]
-        
-        if tabela == 'tecnologia':
-            multiplecategory = item.get('multiplecategory')
-            if not multiplecategory and isinstance(metadata, dict):
-                multiplecategory = metadata.get('multiplecategory')
-            
-            if multiplecategory and isinstance(multiplecategory, list):
-                data['multiplecategory'] = multiplecategory
-            
-            tech_type = item.get('tech_type')
-            if not tech_type and isinstance(metadata, dict):
-                tech_type = metadata.get('tech_type')
-            
-            if tech_type:
-                data['tech_type'] = str(tech_type)[:255]
-        
-        if tabela == 'bens_consumo':
-            consumption_goods_type = item.get('consumption_goods_type')
-            if not consumption_goods_type and isinstance(metadata, dict):
-                consumption_goods_type = metadata.get('consumption_goods_type')
-            
-            if consumption_goods_type:
-                data['consumption_goods_type'] = str(consumption_goods_type)[:255]
-        
-        if tabela == 'partes_pecas':
-            parts_type = item.get('parts_type')
-            if not parts_type and isinstance(metadata, dict):
-                parts_type = metadata.get('parts_type')
-            
-            if parts_type:
-                data['parts_type'] = str(parts_type)[:255]
-        
-        if tabela == 'nichados':
-            specialized_type = item.get('specialized_type')
-            if not specialized_type and isinstance(metadata, dict):
-                specialized_type = metadata.get('specialized_type')
-            
-            if specialized_type:
-                data['specialized_type'] = str(specialized_type)[:255]
-        
-        if tabela == 'eletrodomesticos':
-            appliance_type = item.get('appliance_type')
-            if not appliance_type and isinstance(metadata, dict):
-                appliance_type = metadata.get('appliance_type')
-            
-            if appliance_type:
-                data['appliance_type'] = str(appliance_type)[:255]
-        
-        if tabela == 'materiais_construcao':
-            construction_material_type = item.get('construction_material_type')
-            if not construction_material_type and isinstance(metadata, dict):
-                construction_material_type = metadata.get('construction_material_type')
-            
-            if construction_material_type:
-                data['construction_material_type'] = str(construction_material_type)[:255]
-        
-        return data
     
     def test(self) -> bool:
         """Testa conexão"""

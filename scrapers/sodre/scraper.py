@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER COM INTERCEPTAÇÃO PASSIVA (VERSÃO SIMPLIFICADA)
-✅ Usa has_bid (boolean) da API ao invés de total_bids
-✅ API Sodré retorna bid_has_bid diretamente
+SODRÉ SANTORO - SCRAPER COM INTERCEPTAÇÃO PASSIVA
+✅ Mapeamento direto para tabela sodre_items
+✅ Sem normalizer - campos diretos da API
 """
 
 import asyncio
@@ -12,14 +12,12 @@ import json
 import time
 from pathlib import Path
 from datetime import datetime
-from collections import defaultdict
 from typing import List, Dict
 from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from supabase_client import SupabaseClient
-from normalizer import normalize_items
 
 
 class SodreScraper:
@@ -38,87 +36,14 @@ class SodreScraper:
             f"{self.base_url}/sucatas/lotes?sort=auction_date_init_asc",
         ]
         
-        # Mapeamento de categorias (igual ao original)
-        self.category_mapping = {
-            # VEÍCULOS
-            'caminhões': ('veiculos', {'vehicle_type': 'caminhao'}),
-            'utilit. pesados': ('veiculos', {'vehicle_type': 'pesados'}),
-            'peruas': ('veiculos', {'vehicle_type': 'perua'}),
-            'onibus': ('veiculos', {'vehicle_type': 'onibus'}),
-            'ônibus': ('veiculos', {'vehicle_type': 'onibus'}),
-            'implementos rod.': ('veiculos', {'vehicle_type': 'implemento_rodoviario'}),
-            'van leve': ('veiculos', {'vehicle_type': 'van'}),
-            'carros': ('veiculos', {'vehicle_type': 'carro'}),
-            'utilitarios leves': ('veiculos', {'vehicle_type': 'carro'}),
-            'motos': ('veiculos', {'vehicle_type': 'moto'}),
-            'embarcações': ('veiculos', {'vehicle_type': 'barco'}),
-            
-            # IMÓVEIS
-            'apartamento': ('imoveis', {'property_type': 'apartamento'}),
-            'apartamentos': ('imoveis', {'property_type': 'apartamento'}),
-            'galpão': ('imoveis', {'property_type': 'galpao_industrial'}),
-            'galpão industrial': ('imoveis', {'property_type': 'galpao_industrial'}),
-            'imóvel residencial': ('imoveis', {'property_type': 'residencial'}),
-            'imóveis residenciais': ('imoveis', {'property_type': 'residencial'}),
-            'lote de terreno': ('imoveis', {'property_type': 'terreno_lote'}),
-            'terreno urbano': ('imoveis', {'property_type': 'terreno_lote'}),
-            'terrenos e lotes': ('imoveis', {'property_type': 'terreno_lote'}),
-            'prédio comercial': ('imoveis', {'property_type': 'comercial'}),
-            'sala comercial': ('imoveis', {'property_type': 'comercial'}),
-            
-            # MÁQUINAS
-            'implementos agrícolas': ('maquinas_pesadas_agricolas', {}),
-            'terraplenagem': ('maquinas_pesadas_agricolas', {}),
-            'tratores': ('maquinas_pesadas_agricolas', {}),
-            'eletricos': ('industrial_equipamentos', {}),
-            'elétricos': ('industrial_equipamentos', {}),
-            'empilhadeiras': ('industrial_equipamentos', {}),
-            'equipamentos industriais': ('industrial_equipamentos', {}),
-            
-            # ELETRODOMÉSTICOS
-            'ar condicionado': ('eletrodomesticos', {'appliance_type': 'climatizacao'}),
-            'hidraulicos': ('eletrodomesticos', {'appliance_type': 'hidraulicos'}),
-            'eletrodomesticos': ('eletrodomesticos', {'appliance_type': 'diversos'}),
-            
-            # CONSTRUÇÃO
-            'casa / construção': ('materiais_construcao', {'construction_material_type': 'materiais'}),
-            'ferramentas': ('materiais_construcao', {'construction_material_type': 'ferramentas'}),
-            
-            # NICHADOS
-            'equipamentos para escritório': ('nichados', {'specialized_type': 'negocios'}),
-            'academia': ('nichados', {'specialized_type': 'academia'}),
-            'bares': ('nichados', {'specialized_type': 'restaurante'}),
-            'restaurantes': ('nichados', {'specialized_type': 'restaurante'}),
-            
-            # TECNOLOGIA
-            'telefonia': ('tecnologia', {'tech_type': 'telefonia'}),
-            'eletrônicos': ('tecnologia', {'tech_type': 'eletronicos'}),
-            'informatica': ('tecnologia', {'tech_type': 'informatica'}),
-            
-            # MÓVEIS
-            'móveis para escritório': ('moveis_decoracao', {}),
-            'móveis para casa': ('moveis_decoracao', {}),
-            
-            # BENS DE CONSUMO
-            'uso pessoal': ('bens_consumo', {'consumption_goods_type': 'uso_pessoal'}),
-            
-            # SUCATAS
-            'sucata': ('sucatas_residuos', {}),
-            'veículos fora de estrada': ('sucatas_residuos', {}),
-            
-            # DIVERSOS
-            'diversos': ('diversos', {}),
-        }
-        
         self.stats = {
             'total_scraped': 0,
-            'by_table': defaultdict(int),
             'duplicates': 0,
-            'with_bids': 0,  # ✅ Contador de itens com lances
-            'unmapped_categories': set(),
+            'with_bids': 0,
+            'errors': 0,
         }
     
-    async def scrape(self) -> dict:
+    async def scrape(self) -> List[Dict]:
         """Scrape completo com interceptação passiva"""
         print("\n" + "="*60)
         print("🟣 SODRÉ SANTORO - INTERCEPTAÇÃO PASSIVA")
@@ -191,159 +116,196 @@ class SodreScraper:
         print(f"\n✅ {len(all_lots)} lotes capturados")
         
         # Processa lotes
-        items_by_table = await self._process_lots(all_lots)
+        items = self._process_lots(all_lots)
         
-        self.stats['total_scraped'] = sum(len(items) for items in items_by_table.values())
-        return items_by_table
+        self.stats['total_scraped'] = len(items)
+        return items
     
-    async def _process_lots(self, lots: List[Dict]) -> dict:
-        """Processa lotes da API"""
+    def _process_lots(self, lots: List[Dict]) -> List[Dict]:
+        """Processa lotes da API e mapeia para sodre_items"""
         print("\n📋 Processando lotes...")
         
-        items_by_table = defaultdict(list)
-        global_ids = set()
+        items = []
+        seen_ids = set()
         
         for lot in lots:
             try:
                 item = self._extract_lot_data(lot)
                 
                 if not item:
+                    self.stats['errors'] += 1
                     continue
                 
-                if item['external_id'] in global_ids:
+                if item['external_id'] in seen_ids:
                     self.stats['duplicates'] += 1
                     continue
                 
-                table = item['target_table']
-                items_by_table[table].append(item)
-                global_ids.add(item['external_id'])
-                self.stats['by_table'][table] += 1
+                items.append(item)
+                seen_ids.add(item['external_id'])
                 
-                # ✅ Conta itens com lances
                 if item.get('has_bid'):
                     self.stats['with_bids'] += 1
                 
-            except:
+            except Exception as e:
+                self.stats['errors'] += 1
                 continue
         
-        print(f"\n📊 Itens por tabela:")
-        for table, count in sorted(self.stats['by_table'].items()):
-            print(f"  • {table}: {count}")
-        
-        return items_by_table
+        print(f"  ✅ {len(items)} itens válidos")
+        return items
     
     def _extract_lot_data(self, lot: Dict) -> dict:
-        """Extrai dados de um lote da API"""
+        """Extrai dados de um lote da API e mapeia para sodre_items"""
         try:
+            # IDs obrigatórios
             auction_id = lot.get('auction_id')
             lot_id = lot.get('lot_id')
             
             if not auction_id or not lot_id:
                 return None
             
-            link = f"{self.leilao_base_url}/leilao/{auction_id}/lote/{lot_id}/"
             external_id = f"sodre_{int(lot_id)}"
             
+            # Título obrigatório
             title = lot.get('lot_title', '').strip()
             if not title or len(title) < 3:
                 return None
             
-            # Categoria → Tabela
-            title_upper = title.upper()
-            if 'SUCATA' in title_upper or 'SUCATAS' in title_upper:
-                table = 'sucatas_residuos'
-                extra_fields = {}
+            # Link
+            link = f"{self.leilao_base_url}/leilao/{auction_id}/lote/{lot_id}/"
+            
+            # Datas (timestamp with time zone)
+            auction_date_init = self._parse_datetime(lot.get('auction_date_init'))
+            auction_date_2 = self._parse_datetime(lot.get('auction_date_2'))
+            auction_date_end = self._parse_datetime(lot.get('auction_date_end'))
+            
+            # Localização (city/state serão extraídos pelo trigger)
+            lot_location = lot.get('lot_location', '').strip() or None
+            
+            # Imagem (primeira da lista)
+            image_url = None
+            lot_pictures = lot.get('lot_pictures', [])
+            if lot_pictures and isinstance(lot_pictures, list) and len(lot_pictures) > 0:
+                image_url = lot_pictures[0]
+            
+            # Optionals (array de texto)
+            lot_optionals = lot.get('lot_optionals')
+            if lot_optionals and isinstance(lot_optionals, list):
+                lot_optionals = [str(opt) for opt in lot_optionals if opt]
             else:
-                lot_category = (lot.get('lot_category') or '').lower().strip()
-                table_info = self.category_mapping.get(lot_category, ('diversos', {}))
-                table, extra_fields = table_info
+                lot_optionals = None
             
-            # Valor
-            value = None
-            value_text = None
-            bid_actual = lot.get('bid_actual')
-            if bid_actual:
-                try:
-                    value = float(bid_actual)
-                    value_text = f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-                except:
-                    pass
-            
-            # Localização
-            city = None
-            state = None
-            lot_city = lot.get('lot_location', '')  # ✅ Corrigido: lot_location
-            
-            if '/' in lot_city:
-                parts = lot_city.split('/')
-                city = parts[0].strip()
-                state = parts[1].strip() if len(parts) > 1 else None
-            elif lot_city:
-                city = lot_city.strip()
-            
-            # Data
-            auction_date = None
-            date_str = lot.get('auction_date_init')
-            if date_str:
-                try:
-                    auction_date = date_str.split('T')[0]
-                except:
-                    pass
-            
-            # ✅ HAS_BID - DIRETO DA API (boolean)
-            has_bid = lot.get('bid_has_bid', False)
-            
-            # Metadata
+            # Metadata adicional
             metadata = {
-                'secao_site': lot.get('lot_category', '').strip(),
-                'leilao_id': str(auction_id),
+                'segment_id': lot.get('segment_id'),
+                'segment_label': lot.get('segment_label'),
+                'segment_slug': lot.get('segment_slug'),
+                'lot_pictures': lot_pictures if lot_pictures else None,
+                'search_terms': lot.get('search_terms'),
             }
             
-            # Marca/modelo/ano (veículos e sucatas)
-            if table == 'veiculos' or table == 'sucatas_residuos':
-                brand = lot.get('lot_brand', '').strip()
-                model = lot.get('lot_model', '').strip()
-                year = lot.get('lot_year_model')  # ✅ Corrigido
-                
-                if brand:
-                    metadata['marca'] = brand
-                if model:
-                    metadata['modelo'] = model
-                if year:
-                    metadata['ano_modelo'] = str(year)
+            # Remove None do metadata
+            metadata = {k: v for k, v in metadata.items() if v is not None}
             
-            # Remove None
-            metadata = {k: v for k, v in metadata.items() if v}
-            
-            # Monta item
+            # Monta item com mapeamento direto para sodre_items
             item = {
-                'source': 'sodre',
                 'external_id': external_id,
+                'lot_id': int(lot_id),
+                'lot_number': lot.get('lot_number', '').strip() or None,
+                'lot_inspection_number': lot.get('lot_inspection_number', '').strip() or None,
+                'lot_inspection_id': self._parse_int(lot.get('lot_inspection_id')),
+                'auction_id': int(auction_id),
+                'category': lot.get('category', '').strip() or None,
+                'segment_id': lot.get('segment_id', '').strip() or None,
+                'segment_label': lot.get('segment_label', '').strip() or None,
+                'segment_slug': lot.get('segment_slug', '').strip() or None,
+                'lot_category': lot.get('lot_category', '').strip() or None,
                 'title': title,
-                'description': lot.get('lot_description', ''),
-                'value': value,
-                'value_text': value_text,
-                'city': city,
-                'state': state,
+                'description': lot.get('lot_description', '').strip() or None,
+                'lot_location': lot_location,
+                'auction_name': lot.get('auction_name', '').strip() or None,
+                'auction_status': lot.get('auction_status', '').strip() or None,
+                'auction_date_init': auction_date_init,
+                'auction_date_2': auction_date_2,
+                'auction_date_end': auction_date_end,
+                'auctioneer_name': lot.get('auctioneer_name', '').strip() or None,
+                'client_id': self._parse_int(lot.get('client_id')),
+                'client_name': lot.get('client_name', '').strip() or None,
+                'bid_initial': self._parse_numeric(lot.get('bid_initial')),
+                'bid_actual': self._parse_numeric(lot.get('bid_actual')),
+                'bid_has_bid': bool(lot.get('bid_has_bid', False)),
+                'bid_user_nickname': lot.get('bid_user_nickname', '').strip() or None,
+                'lot_brand': lot.get('lot_brand', '').strip() or None,
+                'lot_model': lot.get('lot_model', '').strip() or None,
+                'lot_year_manufacture': self._parse_int(lot.get('lot_year_manufacture')),
+                'lot_year_model': self._parse_int(lot.get('lot_year_model')),
+                'lot_plate': lot.get('lot_plate', '').strip() or None,
+                'lot_color': lot.get('lot_color', '').strip() or None,
+                'lot_km': self._parse_int(lot.get('lot_km')),
+                'lot_fuel': lot.get('lot_fuel', '').strip() or None,
+                'lot_transmission': lot.get('lot_transmission', '').strip() or None,
+                'lot_sinister': lot.get('lot_sinister', '').strip() or None,
+                'lot_origin': lot.get('lot_origin', '').strip() or None,
+                'lot_optionals': lot_optionals,
+                'lot_tags': lot.get('lot_tags', '').strip() or None,
+                'image_url': image_url,
+                'lot_status': lot.get('lot_status', '').strip() or None,
+                'lot_status_id': self._parse_int(lot.get('lot_status_id')),
+                'lot_is_judicial': bool(lot.get('lot_is_judicial', False)),
+                'lot_is_scrap': bool(lot.get('lot_is_scrap', False)),
+                'lot_financeable': bool(lot.get('lot_status_financeable', False)),
+                'is_highlight': bool(lot.get('is_highlight', False)),
+                'lot_test': bool(lot.get('lot_test', False)),
+                'lot_visits': self._parse_int(lot.get('lot_visits')) or 0,
                 'link': link,
-                'target_table': table,
-                
-                'auction_date': auction_date,
-                'auction_type': 'Leilão',
-                'store_name': lot.get('client_name', '').strip() or None,
-                'lot_number': lot.get('lot_number', '').strip(),
-                
-                # ✅ HAS_BID (boolean)
-                'has_bid': has_bid,
-                
+                'source': 'sodre',
                 'metadata': metadata,
+                'is_active': True,
+                'has_bid': bool(lot.get('bid_has_bid', False)),
             }
-            
-            if extra_fields:
-                item.update(extra_fields)
             
             return item
             
+        except Exception as e:
+            return None
+    
+    def _parse_datetime(self, value) -> str:
+        """Converte datetime para ISO 8601 com timezone"""
+        if not value:
+            return None
+        
+        try:
+            if isinstance(value, str):
+                # Remove timezone se existir e adiciona +00:00
+                value = value.replace('Z', '+00:00')
+                
+                # Tenta parse
+                if 'T' in value:
+                    return value
+                else:
+                    # Formato: 2026-01-13 14:00:00
+                    dt = datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+                    return dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            return None
+        except:
+            return None
+    
+    def _parse_numeric(self, value):
+        """Converte para numeric (float)"""
+        if value is None:
+            return None
+        
+        try:
+            return float(value)
+        except:
+            return None
+    
+    def _parse_int(self, value):
+        """Converte para integer"""
+        if value is None:
+            return None
+        
+        try:
+            return int(value)
         except:
             return None
 
@@ -351,7 +313,7 @@ class SodreScraper:
 async def main():
     """Execução principal"""
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER SIMPLIFICADO")
+    print("🚀 SODRÉ SANTORO - SCRAPER")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
@@ -361,34 +323,16 @@ async def main():
     # FASE 1: SCRAPE
     print("\n🔥 FASE 1: COLETANDO DADOS")
     scraper = SodreScraper()
-    items_by_table = await scraper.scrape()
+    items = await scraper.scrape()
     
-    total_items = sum(len(items) for items in items_by_table.values())
-    
-    print(f"\n✅ Total coletado: {total_items} itens")
+    print(f"\n✅ Total coletado: {len(items)} itens")
     print(f"🔥 Itens com lances: {scraper.stats['with_bids']}")
     print(f"🔄 Duplicatas: {scraper.stats['duplicates']}")
+    print(f"⚠️  Erros: {scraper.stats['errors']}")
     
-    if not total_items:
+    if not items:
         print("⚠️ Nenhum item coletado")
         return
-    
-    # FASE 2: NORMALIZAÇÃO
-    print("\n✨ FASE 2: NORMALIZANDO DADOS")
-    
-    normalized_by_table = {}
-    
-    for table, items in items_by_table.items():
-        if not items:
-            continue
-        
-        try:
-            normalized = normalize_items(items)
-            normalized_by_table[table] = normalized
-            print(f"  ✅ {table}: {len(normalized)} itens")
-        except Exception as e:
-            print(f"  ⚠️ Erro em {table}: {e}")
-            normalized_by_table[table] = items
     
     # Salva JSON
     output_dir = Path(__file__).parent / 'data' / 'normalized'
@@ -397,11 +341,11 @@ async def main():
     json_file = output_dir / f'sodre_{timestamp}.json'
     
     with open(json_file, 'w', encoding='utf-8') as f:
-        json.dump(normalized_by_table, f, ensure_ascii=False, indent=2)
+        json.dump(items, f, ensure_ascii=False, indent=2)
     print(f"💾 JSON: {json_file}")
     
-    # FASE 3: SUPABASE
-    print("\n📤 FASE 3: INSERINDO NO SUPABASE")
+    # FASE 2: SUPABASE
+    print("\n📤 FASE 2: INSERINDO NO SUPABASE")
     
     try:
         supabase = SupabaseClient()
@@ -409,27 +353,13 @@ async def main():
         if not supabase.test():
             print("⚠️ Erro no Supabase")
         else:
-            total_inserted = 0
-            total_updated = 0
+            print(f"\n  📤 sodre_items: {len(items)} itens")
+            stats = supabase.upsert('sodre_items', items)
             
-            for table, items in normalized_by_table.items():
-                if not items:
-                    continue
-                
-                print(f"\n  📤 {table}: {len(items)} itens")
-                stats = supabase.upsert(table, items)
-                
-                print(f"    ✅ Inseridos: {stats['inserted']}")
-                print(f"    🔄 Atualizados: {stats['updated']}")
-                if stats['errors'] > 0:
-                    print(f"    ⚠️ Erros: {stats['errors']}")
-                
-                total_inserted += stats['inserted']
-                total_updated += stats['updated']
-            
-            print(f"\n  📈 TOTAL:")
-            print(f"    ✅ Inseridos: {total_inserted}")
-            print(f"    🔄 Atualizados: {total_updated}")
+            print(f"    ✅ Inseridos: {stats['inserted']}")
+            print(f"    🔄 Atualizados: {stats['updated']}")
+            if stats['errors'] > 0:
+                print(f"    ⚠️ Erros: {stats['errors']}")
     
     except Exception as e:
         print(f"⚠️ Erro Supabase: {e}")
@@ -443,12 +373,10 @@ async def main():
     print("📊 ESTATÍSTICAS FINAIS")
     print("="*70)
     print(f"🟣 Sodré Santoro:")
-    print(f"\n  Por Tabela:")
-    for table, count in sorted(scraper.stats['by_table'].items()):
-        print(f"    • {table}: {count}")
-    print(f"\n  • Total coletado: {scraper.stats['total_scraped']}")
+    print(f"  • Total coletado: {scraper.stats['total_scraped']}")
     print(f"  • Com lances: {scraper.stats['with_bids']}")
     print(f"  • Duplicatas: {scraper.stats['duplicates']}")
+    print(f"  • Erros: {scraper.stats['errors']}")
     print(f"\n⏱️ Duração: {minutes}min {seconds}s")
     print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
