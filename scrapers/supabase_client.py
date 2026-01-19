@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - SODRÉ ITEMS
-✅ Mapeamento direto para tabela sodre_items
-✅ Sem normalização - campos diretos
+SUPABASE CLIENT - SODRÉ ITEMS (COMPLETO)
+✅ Todos os campos: veículos, imóveis judiciais, materiais, sucatas
 """
 
 import os
@@ -13,7 +12,7 @@ from datetime import datetime
 
 
 class SupabaseClient:
-    """Cliente para Supabase - Tabela sodre_items"""
+    """Cliente para Supabase - Tabela sodre_items completa"""
     
     def __init__(self):
         self.url = os.getenv('SUPABASE_URL')
@@ -37,11 +36,11 @@ class SupabaseClient:
         self.session.headers.update(self.headers)
     
     def upsert(self, tabela: str, items: list) -> dict:
-        """Upsert na tabela sodre_items"""
+        """Upsert na tabela sodre_items com TODOS os campos"""
         if not items:
             return {'inserted': 0, 'updated': 0, 'errors': 0}
         
-        # Atualiza last_scraped_at
+        # Atualiza timestamps
         now = datetime.now().isoformat()
         for item in items:
             item['last_scraped_at'] = now
@@ -70,9 +69,9 @@ class SupabaseClient:
                     stats['updated'] += len(batch)
                     print(f"  🔄 Batch {batch_num}/{total_batches}: {len(batch)} atualizados")
                 else:
-                    error_msg = r.text[:200] if r.text else 'Sem detalhes'
+                    error_msg = r.text[:500] if r.text else 'Sem detalhes'
                     print(f"  ❌ Batch {batch_num}: HTTP {r.status_code}")
-                    print(f"     {error_msg}")
+                    print(f"     Erro: {error_msg}")
                     stats['errors'] += len(batch)
             
             except Exception as e:
