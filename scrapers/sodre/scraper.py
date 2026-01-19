@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER COMPLETO
-✅ Mapeamento TOTAL para tabela sodre_items
-✅ Suporta: veículos, imóveis judiciais, materiais, sucatas
+SODRÉ SANTORO - SCRAPER CORRIGIDO
+✅ FIX: Problema do .strip() em None
+✅ Função _safe_str() para todos os campos de texto
+✅ Proteção completa contra AttributeError
 """
 
 import asyncio
@@ -193,7 +194,10 @@ class SodreScraper:
         return items
     
     def _extract_lot_data(self, lot: Dict) -> dict:
-        """Extrai TODOS os dados do lote para sodre_items"""
+        """
+        Extrai TODOS os dados do lote para sodre_items
+        ✅ VERSÃO CORRIGIDA - sem AttributeError
+        """
         try:
             auction_id = lot.get('auction_id')
             lot_id = lot.get('lot_id')
@@ -215,7 +219,13 @@ class SodreScraper:
             
             external_id = f"sodre_{lot_id}"
             
-            title = lot.get('lot_title', '').strip()
+            # ✅ FIX: Usa _safe_str ao invés de .strip() direto
+            title = (
+                self._safe_str(lot.get('lot_title')) or
+                self._safe_str(lot.get('lot_type_name')) or
+                self._safe_str(lot.get('title'))
+            )
+            
             if not title or len(title) < 3:
                 return None
             
@@ -227,18 +237,26 @@ class SodreScraper:
             auction_date_end = self._parse_datetime(lot.get('auction_date_end'))
             
             # Localização
-            lot_location = lot.get('lot_location', '').strip() or None
+            lot_location = self._safe_str(lot.get('lot_location'))
             
             # Imagem
             image_url = None
-            lot_pictures = lot.get('lot_pictures', [])
-            if lot_pictures and isinstance(lot_pictures, list) and len(lot_pictures) > 0:
-                image_url = lot_pictures[0]
+            lot_pictures = lot.get('lot_pictures')
+            if lot_pictures:
+                if isinstance(lot_pictures, list) and len(lot_pictures) > 0:
+                    image_url = lot_pictures[0]
+                elif isinstance(lot_pictures, str):
+                    image_url = lot_pictures
             
             # Optionals
             lot_optionals = lot.get('lot_optionals')
-            if lot_optionals and isinstance(lot_optionals, list):
-                lot_optionals = [str(opt) for opt in lot_optionals if opt]
+            if lot_optionals:
+                if isinstance(lot_optionals, list):
+                    lot_optionals = [str(opt) for opt in lot_optionals if opt]
+                elif isinstance(lot_optionals, str):
+                    lot_optionals = [lot_optionals]
+                else:
+                    lot_optionals = None
             else:
                 lot_optionals = None
             
@@ -249,49 +267,49 @@ class SodreScraper:
                 'search_terms': lot.get('search_terms'),
             }
             
-            # ✅ ITEM BASE COM TODOS OS CAMPOS
+            # ✅ ITEM COM _safe_str() EM TODOS OS CAMPOS DE TEXTO
             item = {
                 'external_id': external_id,
                 'lot_id': lot_id,
-                'lot_number': lot.get('lot_number', '').strip() or None,
-                'lot_inspection_number': lot.get('lot_inspection_number', '').strip() or None,
+                'lot_number': self._safe_str(lot.get('lot_number')),
+                'lot_inspection_number': self._safe_str(lot.get('lot_inspection_number')),
                 'lot_inspection_id': self._parse_int(lot.get('lot_inspection_id')),
                 'auction_id': int(auction_id),
-                'category': lot.get('lot_category', '').strip() or None,
-                'segment_id': lot.get('segment_id', '').strip() or None,
-                'segment_label': lot.get('segment_label', '').strip() or None,
-                'segment_slug': lot.get('segment_slug', '').strip() or None,
-                'lot_category': lot.get('lot_category', '').strip() or None,
+                'category': self._safe_str(lot.get('lot_category')),
+                'segment_id': self._safe_str(lot.get('segment_id')),
+                'segment_label': self._safe_str(lot.get('segment_label')),
+                'segment_slug': self._safe_str(lot.get('segment_slug')),
+                'lot_category': self._safe_str(lot.get('lot_category')),
                 'title': title,
-                'description': lot.get('lot_description', '').strip() or None,
+                'description': self._safe_str(lot.get('lot_description')),
                 'lot_location': lot_location,
-                'auction_name': lot.get('auction_name', '').strip() or None,
-                'auction_status': lot.get('auction_status', '').strip() or None,
+                'auction_name': self._safe_str(lot.get('auction_name')),
+                'auction_status': self._safe_str(lot.get('auction_status')),
                 'auction_date_init': auction_date_init,
                 'auction_date_2': auction_date_2,
                 'auction_date_end': auction_date_end,
-                'auctioneer_name': lot.get('auctioneer_name', '').strip() or None,
+                'auctioneer_name': self._safe_str(lot.get('auctioneer_name')),
                 'client_id': self._parse_int(lot.get('client_id')),
-                'client_name': lot.get('client_name', '').strip() or None,
+                'client_name': self._safe_str(lot.get('client_name')),
                 'bid_initial': self._parse_numeric(lot.get('bid_initial')),
                 'bid_actual': self._parse_numeric(lot.get('bid_actual')),
                 'bid_has_bid': bool(lot.get('bid_has_bid', False)),
-                'bid_user_nickname': lot.get('bid_user_nickname', '').strip() or None,
-                'lot_brand': lot.get('lot_brand', '').strip() or None,
-                'lot_model': lot.get('lot_model', '').strip() or None,
+                'bid_user_nickname': self._safe_str(lot.get('bid_user_nickname')),
+                'lot_brand': self._safe_str(lot.get('lot_brand')),
+                'lot_model': self._safe_str(lot.get('lot_model')),
                 'lot_year_manufacture': self._parse_int(lot.get('lot_year_manufacture')),
                 'lot_year_model': self._parse_int(lot.get('lot_year_model')),
-                'lot_plate': lot.get('lot_plate', '').strip() or None,
-                'lot_color': lot.get('lot_color', '').strip() or None,
+                'lot_plate': self._safe_str(lot.get('lot_plate')),
+                'lot_color': self._safe_str(lot.get('lot_color')),
                 'lot_km': self._parse_int(lot.get('lot_km')),
-                'lot_fuel': lot.get('lot_fuel', '').strip() or None,
-                'lot_transmission': lot.get('lot_transmission', '').strip() or None,
-                'lot_sinister': lot.get('lot_sinister', '').strip() or None,
-                'lot_origin': lot.get('lot_origin', '').strip() or None,
+                'lot_fuel': self._safe_str(lot.get('lot_fuel')),
+                'lot_transmission': self._safe_str(lot.get('lot_transmission')),
+                'lot_sinister': self._safe_str(lot.get('lot_sinister')),
+                'lot_origin': self._safe_str(lot.get('lot_origin')),
                 'lot_optionals': lot_optionals,
-                'lot_tags': lot.get('lot_tags', '').strip() or None,
+                'lot_tags': self._safe_str(lot.get('lot_tags')),
                 'image_url': image_url,
-                'lot_status': lot.get('lot_status', '').strip() or None,
+                'lot_status': self._safe_str(lot.get('lot_status')),
                 'lot_status_id': self._parse_int(lot.get('lot_status_id')),
                 'lot_is_judicial': bool(lot.get('lot_is_judicial', False)),
                 'lot_is_scrap': bool(lot.get('lot_is_scrap', False)),
@@ -305,23 +323,23 @@ class SodreScraper:
                 'has_bid': bool(lot.get('bid_has_bid', False)),
                 
                 # ✅ NOVOS CAMPOS - JUDICIAIS
-                'lot_judicial_process': lot.get('lot_judicial_process', '').strip() or None,
-                'lot_judicial_action': lot.get('lot_judicial_action', '').strip() or None,
-                'lot_judicial_executor': lot.get('lot_judicial_executor', '').strip() or None,
-                'lot_judicial_executed': lot.get('lot_judicial_executed', '').strip() or None,
-                'lot_judicial_judge': lot.get('lot_judicial_judge', '').strip() or None,
+                'lot_judicial_process': self._safe_str(lot.get('lot_judicial_process')),
+                'lot_judicial_action': self._safe_str(lot.get('lot_judicial_action')),
+                'lot_judicial_executor': self._safe_str(lot.get('lot_judicial_executor')),
+                'lot_judicial_executed': self._safe_str(lot.get('lot_judicial_executed')),
+                'lot_judicial_judge': self._safe_str(lot.get('lot_judicial_judge')),
                 'tj_praca_value': self._parse_numeric(lot.get('tj_praca_value')),
                 'tj_praca_discount': self._parse_numeric(lot.get('tj_praca_discount')),
-                'lot_neighborhood': lot.get('lot_neighborhood', '').strip() or None,
-                'lot_street': lot.get('lot_street', '').strip() or None,
+                'lot_neighborhood': self._safe_str(lot.get('lot_neighborhood')),
+                'lot_street': self._safe_str(lot.get('lot_street')),
                 'lot_dormitories': self._parse_int(lot.get('lot_dormitories')),
                 'lot_useful_area': self._parse_numeric(lot.get('lot_useful_area')),
                 'lot_total_area': self._parse_numeric(lot.get('lot_total_area')),
                 'lot_suites': self._parse_int(lot.get('lot_suites')),
                 
                 # ✅ NOVOS CAMPOS - MATERIAIS
-                'lot_subcategory': lot.get('lot_subcategory', '').strip() or None,
-                'lot_type_name': lot.get('lot_type_name', '').strip() or None,
+                'lot_subcategory': self._safe_str(lot.get('lot_subcategory')),
+                'lot_type_name': self._safe_str(lot.get('lot_type_name')),
                 
                 'metadata': {k: v for k, v in metadata.items() if v is not None},
             }
@@ -329,6 +347,19 @@ class SodreScraper:
             return item
             
         except Exception as e:
+            return None
+    
+    def _safe_str(self, value) -> str:
+        """
+        ✅ FUNÇÃO CRÍTICA - Converte para string de forma segura
+        Evita AttributeError quando value é None
+        """
+        if value is None:
+            return None
+        try:
+            result = str(value).strip()
+            return result if result else None
+        except:
             return None
     
     def _parse_datetime(self, value) -> str:
@@ -398,7 +429,7 @@ async def main():
         failed_file = output_dir / f'sodre_failed_{timestamp}.json'
         with open(failed_file, 'w', encoding='utf-8') as f:
             json.dump(scraper.failed_lots[:10], f, ensure_ascii=False, indent=2)
-        print(f"🐛 Debug (primeiros 10 erros): {failed_file}")
+        print(f"🛠 Debug (primeiros 10 erros): {failed_file}")
     
     print("\n📤 FASE 2: INSERINDO NO SUPABASE")
     
