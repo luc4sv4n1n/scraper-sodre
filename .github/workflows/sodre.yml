@@ -4,10 +4,9 @@ on:
   # Execução manual
   workflow_dispatch:
   
-  # Cron automático - DIA SIM, DIA NÃO (dias ímpares)
+  # Cron automático
   schedule:
-    # Dias 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31 às 6h UTC (3h BRT)
-    - cron: '0 6 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31 * *'
+    - cron: '0 4 * * *'
 
 jobs:
   sodre-scraper:
