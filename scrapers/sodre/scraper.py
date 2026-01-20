@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER COM TIMING MELHORADO
-✅ 7 segundos de espera inicial
-✅ Feedback em tempo real da interceptação
-✅ Logs detalhados por seção
+SODRÉ SANTORO - SCRAPER COM PAGINAÇÃO ROBUSTA
+✅ Limite de 200 páginas (aumentado de 50)
+✅ Múltiplos seletores para o botão
+✅ Detecção de fim real de páginas
+✅ Logs detalhados de debugging
 """
 
 import asyncio
@@ -45,13 +46,12 @@ class SodreScraper:
         }
         
         self.failed_lots = []
-        # Contador por seção para feedback em tempo real
         self.section_counters = {}
     
     async def scrape(self) -> List[Dict]:
         """Scrape completo com interceptação passiva"""
         print("\n" + "="*60)
-        print("🟣 SODRÉ SANTORO - INTERCEPTAÇÃO PASSIVA")
+        print("🟣 SODRÉ SANTORO - PAGINAÇÃO ROBUSTA v2")
         print("="*60)
         
         all_lots = []
@@ -67,7 +67,6 @@ class SodreScraper:
             
             page = await context.new_page()
             
-            # Variável para rastrear seção atual
             current_section = {'name': None}
             
             async def intercept_response(response):
@@ -90,7 +89,6 @@ class SodreScraper:
                                 all_lots.extend(extracted)
                                 lots_captured = len(extracted)
                             
-                            # Feedback em tempo real
                             if lots_captured > 0 and current_section['name']:
                                 section = current_section['name']
                                 if section not in self.section_counters:
@@ -112,36 +110,94 @@ class SodreScraper:
                 try:
                     await page.goto(url, wait_until="networkidle", timeout=60000)
                     
-                    # ✅ ESPERA AUMENTADA: 7 segundos para garantir carregamento
                     print(f"  ⏳ Aguardando carregamento inicial (7s)...")
                     await asyncio.sleep(7)
                     
-                    # Verifica se já capturou algo
                     initial_capture = len(all_lots) - lots_before
                     if initial_capture > 0:
                         print(f"  ✅ Página 1: {initial_capture} lotes capturados")
                     
-                    # Paginação
-                    for page_num in range(2, 51):
+                    # ✅ PAGINAÇÃO MELHORADA - até 200 páginas
+                    consecutive_no_data = 0  # Contador de tentativas sem novos dados
+                    max_no_data = 3  # Máximo de tentativas sem dados antes de parar
+                    
+                    for page_num in range(2, 201):
                         try:
+                            # Scroll para garantir carregamento
                             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            await asyncio.sleep(2)
+                            await asyncio.sleep(1)
                             
-                            button = page.locator('button[title="Avançar"]:not([disabled])').first
-                            if await button.count() > 0:
-                                await button.click()
-                                print(f"  ➡️  Página {page_num}...")
-                                
-                                # ✅ ESPERA APÓS CLICK: 5 segundos
-                                await asyncio.sleep(5)
-                            else:
-                                print(f"  ✅ {page_num-1} páginas")
+                            lots_before_click = len(all_lots)
+                            
+                            # ✅ MÚLTIPLOS SELETORES - tenta todos até encontrar
+                            button_found = False
+                            selectors = [
+                                'button[title="Avançar"]:not([disabled])',
+                                'button[title="Avançar"]',  # Tenta mesmo se tiver disabled (pode estar apenas hidden)
+                                'button:has-text("Avançar"):not([disabled])',
+                                'button.i-mdi\\:chevron-right:not([disabled])',  # Pelo ícone
+                                '.pagination button:last-child:not([disabled])',
+                            ]
+                            
+                            for selector in selectors:
+                                try:
+                                    button = page.locator(selector).first
+                                    count = await button.count()
+                                    
+                                    if count > 0:
+                                        # Verifica se está visível E clicável
+                                        is_visible = await button.is_visible()
+                                        is_enabled = await button.is_enabled()
+                                        
+                                        if is_visible and is_enabled:
+                                            await button.click()
+                                            button_found = True
+                                            if self.debug:
+                                                print(f"  🔍 Botão encontrado com: {selector}")
+                                            break
+                                        elif self.debug and count > 0:
+                                            print(f"  ⚠️ Botão existe mas não está clicável (visible:{is_visible}, enabled:{is_enabled})")
+                                except Exception as e:
+                                    if self.debug:
+                                        print(f"  ⚠️ Erro ao tentar {selector}: {type(e).__name__}")
+                                    continue
+                            
+                            if not button_found:
+                                if self.debug:
+                                    # Tenta ver o que existe na página
+                                    all_buttons = await page.locator('button').count()
+                                    print(f"  ℹ️ Total de botões na página: {all_buttons}")
+                                    
+                                print(f"  ✅ {page_num-1} páginas - botão não encontrado")
                                 break
-                        except:
+                            
+                            print(f"  ➡️  Página {page_num}...")
+                            
+                            # Espera após o click
+                            await asyncio.sleep(5)
+                            
+                            # ✅ VERIFICA SE CAPTUROU NOVOS DADOS
+                            lots_after_click = len(all_lots)
+                            new_lots = lots_after_click - lots_before_click
+                            
+                            if new_lots == 0:
+                                consecutive_no_data += 1
+                                if self.debug:
+                                    print(f"    ⚠️ Nenhum lote novo ({consecutive_no_data}/{max_no_data})")
+                                
+                                if consecutive_no_data >= max_no_data:
+                                    print(f"  ⏹️ Parando: {consecutive_no_data} tentativas sem novos dados")
+                                    break
+                            else:
+                                consecutive_no_data = 0  # Reset se capturou dados
+                                
+                        except Exception as e:
+                            if self.debug:
+                                print(f"  ⚠️ Erro na página {page_num}: {type(e).__name__} - {str(e)}")
                             break
                 
                 except Exception as e:
-                    print(f"  ⚠️ Erro: {e}")
+                    print(f"  ⚠️ Erro na seção: {e}")
                 
                 lots_after = len(all_lots)
                 section_lots = lots_after - lots_before
@@ -419,7 +475,7 @@ class SodreScraper:
 
 async def main():
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER COMPLETO")
+    print("🚀 SODRÉ SANTORO - SCRAPER MELHORADO")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
