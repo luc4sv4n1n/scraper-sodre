@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER CORRIGIDO
-✅ FIX: Problema do .strip() em None
-✅ Função _safe_str() para todos os campos de texto
-✅ Proteção completa contra AttributeError
+SODRÉ SANTORO - SCRAPER COM TIMING MELHORADO
+✅ 7 segundos de espera inicial
+✅ Feedback em tempo real da interceptação
+✅ Logs detalhados por seção
 """
 
 import asyncio
@@ -45,6 +45,8 @@ class SodreScraper:
         }
         
         self.failed_lots = []
+        # Contador por seção para feedback em tempo real
+        self.section_counters = {}
     
     async def scrape(self) -> List[Dict]:
         """Scrape completo com interceptação passiva"""
@@ -65,6 +67,9 @@ class SodreScraper:
             
             page = await context.new_page()
             
+            # Variável para rastrear seção atual
+            current_section = {'name': None}
+            
             async def intercept_response(response):
                 try:
                     if '/api/search-lots' in response.url and response.status == 200:
@@ -75,11 +80,23 @@ class SodreScraper:
                             results = data.get('results', [])
                             hits = data.get('hits', {}).get('hits', [])
                             
+                            lots_captured = 0
+                            
                             if results:
                                 all_lots.extend(results)
+                                lots_captured = len(results)
                             elif hits:
                                 extracted = [hit.get('_source', hit) for hit in hits]
                                 all_lots.extend(extracted)
+                                lots_captured = len(extracted)
+                            
+                            # Feedback em tempo real
+                            if lots_captured > 0 and current_section['name']:
+                                section = current_section['name']
+                                if section not in self.section_counters:
+                                    self.section_counters[section] = 0
+                                self.section_counters[section] += lots_captured
+                                print(f"     📥 +{lots_captured} lotes | Total seção: {self.section_counters[section]}")
                 except:
                     pass
             
@@ -87,14 +104,24 @@ class SodreScraper:
             
             for url in self.urls:
                 section_name = url.split('/')[3]
+                current_section['name'] = section_name
                 lots_before = len(all_lots)
                 
                 print(f"\n📦 {section_name.upper()}")
                 
                 try:
                     await page.goto(url, wait_until="networkidle", timeout=60000)
-                    await asyncio.sleep(3)
                     
+                    # ✅ ESPERA AUMENTADA: 7 segundos para garantir carregamento
+                    print(f"  ⏳ Aguardando carregamento inicial (7s)...")
+                    await asyncio.sleep(7)
+                    
+                    # Verifica se já capturou algo
+                    initial_capture = len(all_lots) - lots_before
+                    if initial_capture > 0:
+                        print(f"  ✅ Página 1: {initial_capture} lotes capturados")
+                    
+                    # Paginação
                     for page_num in range(2, 51):
                         try:
                             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -104,7 +131,9 @@ class SodreScraper:
                             if await button.count() > 0:
                                 await button.click()
                                 print(f"  ➡️  Página {page_num}...")
-                                await asyncio.sleep(4)
+                                
+                                # ✅ ESPERA APÓS CLICK: 5 segundos
+                                await asyncio.sleep(5)
                             else:
                                 print(f"  ✅ {page_num-1} páginas")
                                 break
@@ -119,7 +148,9 @@ class SodreScraper:
                 lots_by_section[section_name] = section_lots
                 
                 if section_lots == 0:
-                    print(f"  ⚠️  Nenhum lote capturado")
+                    print(f"  ⚠️  Nenhum lote capturado nesta seção")
+                else:
+                    print(f"  ✅ TOTAL DA SEÇÃO: {section_lots} lotes")
             
             await browser.close()
         
@@ -194,10 +225,7 @@ class SodreScraper:
         return items
     
     def _extract_lot_data(self, lot: Dict) -> dict:
-        """
-        Extrai TODOS os dados do lote para sodre_items
-        ✅ VERSÃO CORRIGIDA - sem AttributeError
-        """
+        """Extrai TODOS os dados do lote para sodre_items"""
         try:
             auction_id = lot.get('auction_id')
             lot_id = lot.get('lot_id')
@@ -219,7 +247,6 @@ class SodreScraper:
             
             external_id = f"sodre_{lot_id}"
             
-            # ✅ FIX: Usa _safe_str ao invés de .strip() direto
             title = (
                 self._safe_str(lot.get('lot_title')) or
                 self._safe_str(lot.get('lot_type_name')) or
@@ -267,7 +294,6 @@ class SodreScraper:
                 'search_terms': lot.get('search_terms'),
             }
             
-            # ✅ ITEM COM _safe_str() EM TODOS OS CAMPOS DE TEXTO
             item = {
                 'external_id': external_id,
                 'lot_id': lot_id,
@@ -322,7 +348,7 @@ class SodreScraper:
                 'is_active': True,
                 'has_bid': bool(lot.get('bid_has_bid', False)),
                 
-                # ✅ NOVOS CAMPOS - JUDICIAIS
+                # Campos judiciais
                 'lot_judicial_process': self._safe_str(lot.get('lot_judicial_process')),
                 'lot_judicial_action': self._safe_str(lot.get('lot_judicial_action')),
                 'lot_judicial_executor': self._safe_str(lot.get('lot_judicial_executor')),
@@ -337,7 +363,7 @@ class SodreScraper:
                 'lot_total_area': self._parse_numeric(lot.get('lot_total_area')),
                 'lot_suites': self._parse_int(lot.get('lot_suites')),
                 
-                # ✅ NOVOS CAMPOS - MATERIAIS
+                # Campos materiais
                 'lot_subcategory': self._safe_str(lot.get('lot_subcategory')),
                 'lot_type_name': self._safe_str(lot.get('lot_type_name')),
                 
@@ -350,10 +376,7 @@ class SodreScraper:
             return None
     
     def _safe_str(self, value) -> str:
-        """
-        ✅ FUNÇÃO CRÍTICA - Converte para string de forma segura
-        Evita AttributeError quando value é None
-        """
+        """Converte para string de forma segura"""
         if value is None:
             return None
         try:
