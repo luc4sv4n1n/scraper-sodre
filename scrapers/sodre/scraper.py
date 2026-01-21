@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER COM PAGINAÇÃO ROBUSTA
+SODRÉ SANTORO - SCRAPER COM PAGINAÇÃO ROBUSTA + HEARTBEAT
 ✅ Limite de 200 páginas (aumentado de 50)
 ✅ Múltiplos seletores para o botão
 ✅ Detecção de fim real de páginas
 ✅ Logs detalhados de debugging
+✅ Sistema de heartbeat para monitoramento
 """
 
 import asyncio
@@ -23,7 +24,7 @@ from supabase_client import SupabaseClient
 
 
 class SodreScraper:
-    """Scraper Sodré com interceptação passiva da API"""
+    """Scraper Sodré com interceptação passiva da API + Heartbeat"""
     
     def __init__(self, debug=False):
         self.source = 'sodre'
@@ -171,7 +172,7 @@ class SodreScraper:
                                 print(f"  ✅ {page_num-1} páginas - botão não encontrado")
                                 break
                             
-                            print(f"  ➡️  Página {page_num}...")
+                            print(f"  ➡️ Página {page_num}...")
                             
                             # Espera após o click
                             await asyncio.sleep(5)
@@ -186,7 +187,7 @@ class SodreScraper:
                                     print(f"    ⚠️ Nenhum lote novo ({consecutive_no_data}/{max_no_data})")
                                 
                                 if consecutive_no_data >= max_no_data:
-                                    print(f"  ⏹️ Parando: {consecutive_no_data} tentativas sem novos dados")
+                                    print(f"  ℹ️ Parando: {consecutive_no_data} tentativas sem novos dados")
                                     break
                             else:
                                 consecutive_no_data = 0  # Reset se capturou dados
@@ -475,49 +476,74 @@ class SodreScraper:
 
 async def main():
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER MELHORADO")
+    print("🚀 SODRÉ SANTORO - SCRAPER MELHORADO + HEARTBEAT")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
     
     start_time = time.time()
-    
-    print("\n🔥 FASE 1: COLETANDO DADOS")
-    scraper = SodreScraper(debug=True)
-    items = await scraper.scrape()
-    
-    print(f"\n✅ Total coletado: {len(items)} itens")
-    print(f"🔥 Itens com lances: {scraper.stats['with_bids']}")
-    print(f"🔄 Duplicatas: {scraper.stats['duplicates']}")
-    print(f"⚠️  Erros: {scraper.stats['errors']}")
-    
-    if not items:
-        print("⚠️ Nenhum item coletado")
-        return
-    
-    output_dir = Path(__file__).parent / 'data' / 'normalized'
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    json_file = output_dir / f'sodre_{timestamp}.json'
-    
-    with open(json_file, 'w', encoding='utf-8') as f:
-        json.dump(items, f, ensure_ascii=False, indent=2)
-    print(f"💾 JSON: {json_file}")
-    
-    if scraper.failed_lots:
-        failed_file = output_dir / f'sodre_failed_{timestamp}.json'
-        with open(failed_file, 'w', encoding='utf-8') as f:
-            json.dump(scraper.failed_lots[:10], f, ensure_ascii=False, indent=2)
-        print(f"🛠 Debug (primeiros 10 erros): {failed_file}")
-    
-    print("\n📤 FASE 2: INSERINDO NO SUPABASE")
+    supabase = None
     
     try:
-        supabase = SupabaseClient()
+        # ✅ INICIA SUPABASE COM HEARTBEAT
+        print("\n💓 Iniciando sistema de heartbeat...")
+        supabase = SupabaseClient(
+            service_name='sodre_scraper',
+            service_type='scraper'
+        )
         
+        # ✅ TESTA CONEXÃO
         if not supabase.test():
-            print("⚠️ Erro no Supabase")
+            print("⚠️ Erro no Supabase - continuando sem heartbeat")
         else:
+            # ✅ INICIA HEARTBEAT
+            supabase.heartbeat_start(metadata={
+                'scraper': 'sodre',
+                'sections': 4,
+                'max_pages_per_section': 200
+            })
+        
+        # ✅ COLETA DADOS
+        print("\n🔥 FASE 1: COLETANDO DADOS")
+        scraper = SodreScraper(debug=True)
+        items = await scraper.scrape()
+        
+        print(f"\n✅ Total coletado: {len(items)} itens")
+        print(f"🔥 Itens com lances: {scraper.stats['with_bids']}")
+        print(f"🔄 Duplicatas: {scraper.stats['duplicates']}")
+        print(f"⚠️  Erros: {scraper.stats['errors']}")
+        
+        if not items:
+            print("⚠️ Nenhum item coletado")
+            
+            # ✅ FINALIZA HEARTBEAT COM ERRO
+            if supabase:
+                supabase.heartbeat_finish(status='warning', final_stats={
+                    'items_collected': 0,
+                    'reason': 'no_items_collected'
+                })
+            return
+        
+        # ✅ SALVA JSON
+        output_dir = Path(__file__).parent / 'data' / 'normalized'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        json_file = output_dir / f'sodre_{timestamp}.json'
+        
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+        print(f"💾 JSON: {json_file}")
+        
+        if scraper.failed_lots:
+            failed_file = output_dir / f'sodre_failed_{timestamp}.json'
+            with open(failed_file, 'w', encoding='utf-8') as f:
+                json.dump(scraper.failed_lots[:10], f, ensure_ascii=False, indent=2)
+            print(f"🛠 Debug (primeiros 10 erros): {failed_file}")
+        
+        # ✅ INSERE NO SUPABASE
+        print("\n📤 FASE 2: INSERINDO NO SUPABASE")
+        
+        if supabase:
             print(f"\n  📤 sodre_items: {len(items)} itens")
             stats = supabase.upsert('sodre_items', items)
             
@@ -525,25 +551,40 @@ async def main():
             print(f"    🔄 Atualizados: {stats['updated']}")
             if stats['errors'] > 0:
                 print(f"    ⚠️ Erros: {stats['errors']}")
+            
+            # ✅ FINALIZA HEARTBEAT COM SUCESSO
+            supabase.heartbeat_finish(status='inactive', final_stats={
+                'items_collected': len(items),
+                'items_inserted': stats['inserted'],
+                'items_updated': stats['updated'],
+                'items_with_bids': scraper.stats['with_bids'],
+                'duplicates': scraper.stats['duplicates'],
+                'errors': scraper.stats['errors'],
+            })
     
     except Exception as e:
-        print(f"⚠️ Erro Supabase: {e}")
+        print(f"⚠️ Erro crítico: {e}")
+        
+        # ✅ REGISTRA ERRO NO HEARTBEAT
+        if supabase:
+            supabase.heartbeat_error(str(e)[:500])
     
-    elapsed = time.time() - start_time
-    minutes = int(elapsed // 60)
-    seconds = int(elapsed % 60)
-    
-    print("\n" + "="*70)
-    print("📊 ESTATÍSTICAS FINAIS")
-    print("="*70)
-    print(f"🟣 Sodré Santoro:")
-    print(f"  • Total coletado: {scraper.stats['total_scraped']}")
-    print(f"  • Com lances: {scraper.stats['with_bids']}")
-    print(f"  • Duplicatas: {scraper.stats['duplicates']}")
-    print(f"  • Erros: {scraper.stats['errors']}")
-    print(f"\n⏱️ Duração: {minutes}min {seconds}s")
-    print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*70)
+    finally:
+        elapsed = time.time() - start_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        
+        print("\n" + "="*70)
+        print("📊 ESTATÍSTICAS FINAIS")
+        print("="*70)
+        print(f"🟣 Sodré Santoro:")
+        print(f"  • Total coletado: {scraper.stats['total_scraped']}")
+        print(f"  • Com lances: {scraper.stats['with_bids']}")
+        print(f"  • Duplicatas: {scraper.stats['duplicates']}")
+        print(f"  • Erros: {scraper.stats['errors']}")
+        print(f"\n⏱️ Duração: {minutes}min {seconds}s")
+        print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*70)
 
 
 if __name__ == "__main__":

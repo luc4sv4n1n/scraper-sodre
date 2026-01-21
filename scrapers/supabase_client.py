@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - SODRÉ ITEMS (CORRIGIDO)
+SUPABASE CLIENT - SODRÉ ITEMS (COM HEARTBEAT)
 ✅ Upsert correto com on_conflict
 ✅ Prefer header adequado
 ✅ Tratamento de erros melhorado
+✅ Sistema de heartbeat para monitoramento
 """
 
 import os
 import time
 import requests
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 
 class SupabaseClient:
-    """Cliente para Supabase - Tabela sodre_items completa"""
+    """Cliente para Supabase - Tabela sodre_items completa + Heartbeat"""
     
-    def __init__(self):
+    def __init__(self, service_name: str = None, service_type: str = 'scraper'):
         self.url = os.getenv('SUPABASE_URL')
         self.key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
         
         if not self.url or not self.key:
-            raise ValueError("❌ Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY")
+            raise ValueError("⚠ Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY")
         
         self.url = self.url.rstrip('/')
         
@@ -37,6 +38,177 @@ class SupabaseClient:
         
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        
+        # ✅ HEARTBEAT - Atributos de controle
+        self.service_name = service_name
+        self.service_type = service_type
+        self.heartbeat_id = None
+        self.heartbeat_enabled = bool(service_name)  # Só ativa se receber service_name
+        self.start_time = time.time()
+        self.items_processed = 0
+    
+    # ========================================================================
+    # MÉTODOS HEARTBEAT (NOVOS - NÃO QUEBRAM NADA)
+    # ========================================================================
+    
+    def heartbeat_start(self, metadata: Optional[Dict] = None) -> bool:
+        """
+        Inicia heartbeat no infra_actions
+        ✅ Seguro: Se falhar, só loga mas não interrompe
+        """
+        if not self.heartbeat_enabled:
+            return False
+        
+        try:
+            url = f"{self.url}/rest/v1/infra_actions"
+            
+            payload = {
+                'service_name': self.service_name,
+                'service_type': self.service_type,
+                'status': 'active',
+                'last_activity': datetime.now().isoformat(),
+                'logs': {
+                    'started_at': datetime.now().isoformat(),
+                    'items_processed': 0,
+                },
+                'metadata': metadata or {},
+            }
+            
+            # ✅ Headers para schema PUBLIC (infra_actions está em public)
+            heartbeat_headers = {
+                **self.headers,
+                'Content-Profile': 'public',
+                'Accept-Profile': 'public',
+                'Prefer': 'return=representation'
+            }
+            
+            r = self.session.post(
+                url,
+                json=payload,
+                headers=heartbeat_headers,
+                timeout=10
+            )
+            
+            if r.status_code in (200, 201):
+                data = r.json()
+                if data and len(data) > 0:
+                    self.heartbeat_id = data[0].get('id')
+                    print(f"  💓 Heartbeat iniciado: {self.heartbeat_id}")
+                    return True
+        
+        except Exception as e:
+            print(f"  ⚠️ Erro ao iniciar heartbeat: {e}")
+        
+        return False
+    
+    def heartbeat_update(
+        self,
+        status: str = 'active',
+        custom_logs: Optional[Dict] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """
+        Atualiza heartbeat
+        ✅ Seguro: Se falhar, não quebra o scraper
+        """
+        if not self.heartbeat_enabled or not self.heartbeat_id:
+            return False
+        
+        try:
+            url = f"{self.url}/rest/v1/infra_actions"
+            params = {'id': f'eq.{self.heartbeat_id}'}
+            
+            elapsed = time.time() - self.start_time
+            
+            logs = {
+                'last_update': datetime.now().isoformat(),
+                'items_processed': self.items_processed,
+                'elapsed_seconds': round(elapsed, 2),
+            }
+            
+            if custom_logs:
+                logs.update(custom_logs)
+            
+            payload = {
+                'status': status,
+                'last_activity': datetime.now().isoformat(),
+                'logs': logs,
+            }
+            
+            if error_message:
+                payload['error_message'] = error_message
+            
+            # ✅ Headers para schema PUBLIC
+            heartbeat_headers = {
+                **self.headers,
+                'Content-Profile': 'public',
+                'Accept-Profile': 'public',
+            }
+            
+            r = self.session.patch(
+                url,
+                params=params,
+                json=payload,
+                headers=heartbeat_headers,
+                timeout=10
+            )
+            
+            return r.status_code == 204
+        
+        except Exception as e:
+            # Silencioso - não queremos interromper o scraper por erro de heartbeat
+            return False
+    
+    def heartbeat_progress(
+        self,
+        items_processed: int = 0,
+        custom_logs: Optional[Dict] = None
+    ) -> bool:
+        """
+        Atualiza progresso (chamado durante batches)
+        ✅ Seguro: Incrementa contador e atualiza
+        """
+        self.items_processed += items_processed
+        return self.heartbeat_update(status='active', custom_logs=custom_logs)
+    
+    def heartbeat_finish(
+        self,
+        status: str = 'inactive',
+        final_stats: Optional[Dict] = None
+    ) -> bool:
+        """
+        Finaliza heartbeat
+        ✅ Seguro: Marca como concluído
+        """
+        if not self.heartbeat_enabled or not self.heartbeat_id:
+            return False
+        
+        custom_logs = {
+            'finished_at': datetime.now().isoformat(),
+            'total_items_processed': self.items_processed,
+            'total_elapsed_seconds': round(time.time() - self.start_time, 2),
+        }
+        
+        if final_stats:
+            custom_logs.update(final_stats)
+        
+        success = self.heartbeat_update(status=status, custom_logs=custom_logs)
+        
+        if success:
+            print(f"  💓 Heartbeat finalizado: {self.items_processed} itens em {custom_logs['total_elapsed_seconds']}s")
+        
+        return success
+    
+    def heartbeat_error(self, error_message: str) -> bool:
+        """
+        Marca heartbeat como erro
+        ✅ Seguro: Registra erro mas não interrompe
+        """
+        return self.heartbeat_update(status='error', error_message=error_message)
+    
+    # ========================================================================
+    # MÉTODOS ORIGINAIS (INALTERADOS, EXCETO UMA LINHA NO UPSERT)
+    # ========================================================================
     
     def upsert(self, tabela: str, items: List[Dict]) -> Dict:
         """
@@ -44,6 +216,7 @@ class SupabaseClient:
         ✅ Usa external_id como chave de conflito
         ✅ Atualiza registros existentes
         ✅ Insere novos registros
+        ✅ Heartbeat opcional (não quebra nada)
         """
         if not items:
             return {'inserted': 0, 'updated': 0, 'errors': 0, 'total': 0}
@@ -100,6 +273,12 @@ class SupabaseClient:
                         stats['inserted'] += len(batch)
                     
                     print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch)} itens processados")
+                    
+                    # ✅ ÚNICA LINHA ADICIONADA - Heartbeat opcional
+                    self.heartbeat_progress(
+                        items_processed=len(batch),
+                        custom_logs={'batch': batch_num, 'total_batches': total_batches}
+                    )
                 
                 else:
                     error_msg = r.text[:300] if r.text else 'Sem detalhes'
