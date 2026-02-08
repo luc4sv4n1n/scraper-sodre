@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - SODRÉ ITEMS (COM HEARTBEAT)
-✅ Upsert correto com on_conflict
-✅ Prefer header adequado
-✅ Tratamento de erros melhorado
-✅ Sistema de heartbeat para monitoramento
+SUPABASE CLIENT - VERSÃO CORRIGIDA
+✅ Normaliza chaves antes de enviar (fix PGRST102)
+✅ Todos os items no batch têm as mesmas chaves
 """
 
 import os
@@ -16,7 +14,7 @@ from typing import List, Dict, Optional
 
 
 class SupabaseClient:
-    """Cliente para Supabase - Tabela sodre_items completa + Heartbeat"""
+    """Cliente para Supabase - Com normalização de chaves"""
     
     def __init__(self, service_name: str = None, service_type: str = 'scraper'):
         self.url = os.getenv('SUPABASE_URL')
@@ -27,7 +25,6 @@ class SupabaseClient:
         
         self.url = self.url.rstrip('/')
         
-        # ✅ Headers base (sem Prefer - será adicionado por operação)
         self.headers = {
             'apikey': self.key,
             'Authorization': f'Bearer {self.key}',
@@ -39,23 +36,19 @@ class SupabaseClient:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
         
-        # ✅ HEARTBEAT - Atributos de controle
+        # Heartbeat
         self.service_name = service_name
         self.service_type = service_type
         self.heartbeat_id = None
-        self.heartbeat_enabled = bool(service_name)  # Só ativa se receber service_name
+        self.heartbeat_enabled = bool(service_name)
         self.start_time = time.time()
         self.items_processed = 0
     
     # ========================================================================
-    # MÉTODOS HEARTBEAT (NOVOS - NÃO QUEBRAM NADA)
+    # MÉTODOS HEARTBEAT (COPIADOS DO ORIGINAL)
     # ========================================================================
     
     def heartbeat_start(self, metadata: Optional[Dict] = None) -> bool:
-        """
-        Inicia heartbeat no infra_actions
-        ✅ Seguro: Se falhar, só loga mas não interrompe
-        """
         if not self.heartbeat_enabled:
             return False
         
@@ -74,7 +67,6 @@ class SupabaseClient:
                 'metadata': metadata or {},
             }
             
-            # ✅ Headers para schema PUBLIC (infra_actions está em public)
             heartbeat_headers = {
                 **self.headers,
                 'Content-Profile': 'public',
@@ -82,12 +74,7 @@ class SupabaseClient:
                 'Prefer': 'return=representation'
             }
             
-            r = self.session.post(
-                url,
-                json=payload,
-                headers=heartbeat_headers,
-                timeout=10
-            )
+            r = self.session.post(url, json=payload, headers=heartbeat_headers, timeout=10)
             
             if r.status_code in (200, 201):
                 data = r.json()
@@ -101,16 +88,7 @@ class SupabaseClient:
         
         return False
     
-    def heartbeat_update(
-        self,
-        status: str = 'active',
-        custom_logs: Optional[Dict] = None,
-        error_message: Optional[str] = None
-    ) -> bool:
-        """
-        Atualiza heartbeat
-        ✅ Seguro: Se falhar, não quebra o scraper
-        """
+    def heartbeat_update(self, status: str = 'active', custom_logs: Optional[Dict] = None, error_message: Optional[str] = None) -> bool:
         if not self.heartbeat_enabled or not self.heartbeat_id:
             return False
         
@@ -138,48 +116,24 @@ class SupabaseClient:
             if error_message:
                 payload['error_message'] = error_message
             
-            # ✅ Headers para schema PUBLIC
             heartbeat_headers = {
                 **self.headers,
                 'Content-Profile': 'public',
                 'Accept-Profile': 'public',
             }
             
-            r = self.session.patch(
-                url,
-                params=params,
-                json=payload,
-                headers=heartbeat_headers,
-                timeout=10
-            )
+            r = self.session.patch(url, params=params, json=payload, headers=heartbeat_headers, timeout=10)
             
             return r.status_code == 204
         
-        except Exception as e:
-            # Silencioso - não queremos interromper o scraper por erro de heartbeat
+        except:
             return False
     
-    def heartbeat_progress(
-        self,
-        items_processed: int = 0,
-        custom_logs: Optional[Dict] = None
-    ) -> bool:
-        """
-        Atualiza progresso (chamado durante batches)
-        ✅ Seguro: Incrementa contador e atualiza
-        """
+    def heartbeat_progress(self, items_processed: int = 0, custom_logs: Optional[Dict] = None) -> bool:
         self.items_processed += items_processed
         return self.heartbeat_update(status='active', custom_logs=custom_logs)
     
-    def heartbeat_finish(
-        self,
-        status: str = 'inactive',
-        final_stats: Optional[Dict] = None
-    ) -> bool:
-        """
-        Finaliza heartbeat
-        ✅ Seguro: Marca como concluído
-        """
+    def heartbeat_finish(self, status: str = 'inactive', final_stats: Optional[Dict] = None) -> bool:
         if not self.heartbeat_enabled or not self.heartbeat_id:
             return False
         
@@ -195,40 +149,58 @@ class SupabaseClient:
         success = self.heartbeat_update(status=status, custom_logs=custom_logs)
         
         if success:
-            print(f"  💓 Heartbeat finalizado: {self.items_processed} itens em {custom_logs['total_elapsed_seconds']}s")
+            print(f"  💓 Heartbeat finalizado: {self.items_processed} itens")
         
         return success
     
     def heartbeat_error(self, error_message: str) -> bool:
-        """
-        Marca heartbeat como erro
-        ✅ Seguro: Registra erro mas não interrompe
-        """
         return self.heartbeat_update(status='error', error_message=error_message)
     
     # ========================================================================
-    # MÉTODOS ORIGINAIS (INALTERADOS, EXCETO UMA LINHA NO UPSERT)
+    # NOVO: NORMALIZAÇÃO DE CHAVES
+    # ========================================================================
+    
+    def _normalize_batch_keys(self, items: List[Dict]) -> List[Dict]:
+        """
+        Normaliza todos os items para terem as mesmas chaves
+        ✅ Resolve PGRST102: "All object keys must match"
+        """
+        if not items:
+            return items
+        
+        # Coleta todas as chaves únicas de todos os items
+        all_keys = set()
+        for item in items:
+            all_keys.update(item.keys())
+        
+        # Normaliza cada item para ter todas as chaves
+        normalized = []
+        for item in items:
+            normalized_item = {}
+            for key in all_keys:
+                normalized_item[key] = item.get(key, None)
+            normalized.append(normalized_item)
+        
+        return normalized
+    
+    # ========================================================================
+    # UPSERT CORRIGIDO
     # ========================================================================
     
     def upsert(self, tabela: str, items: List[Dict]) -> Dict:
         """
-        Upsert correto na tabela sodre_items
-        ✅ Usa external_id como chave de conflito
-        ✅ Atualiza registros existentes
-        ✅ Insere novos registros
-        ✅ Heartbeat opcional (não quebra nada)
+        Upsert com normalização de chaves
+        ✅ Fix PGRST102: Normaliza chaves antes de enviar
         """
         if not items:
             return {'inserted': 0, 'updated': 0, 'errors': 0, 'total': 0}
         
-        # Prepara items com timestamps
+        # Prepara timestamps
         now = datetime.now().isoformat()
         for item in items:
             item['last_scraped_at'] = now
             if 'updated_at' not in item or not item['updated_at']:
                 item['updated_at'] = now
-            # created_at só é definido no banco via DEFAULT now()
-            # não enviamos para permitir que novos registros usem o default
             if 'created_at' in item:
                 del item['created_at']
         
@@ -236,10 +208,8 @@ class SupabaseClient:
         batch_size = 500
         total_batches = (len(items) + batch_size - 1) // batch_size
         
-        # ✅ URL com on_conflict para upsert correto
         url = f"{self.url}/rest/v1/{tabela}?on_conflict=external_id"
         
-        # ✅ Headers específicos para upsert
         upsert_headers = {
             **self.headers,
             'Prefer': 'resolution=merge-duplicates,return=representation'
@@ -250,31 +220,29 @@ class SupabaseClient:
             batch_num = (i // batch_size) + 1
             
             try:
-                # ✅ POST com on_conflict = UPSERT
+                # ✅ NORMALIZA CHAVES DO BATCH
+                normalized_batch = self._normalize_batch_keys(batch)
+                
+                # Envia batch normalizado
                 r = self.session.post(
                     url,
-                    json=batch,
+                    json=normalized_batch,
                     headers=upsert_headers,
                     timeout=120
                 )
                 
                 if r.status_code in (200, 201):
-                    # Tenta contar inserted vs updated pela resposta
                     try:
                         response_data = r.json()
                         if isinstance(response_data, list):
-                            # Se retornou dados, conta como sucesso
                             stats['inserted'] += len(response_data)
                         else:
-                            # Se não retornou, assume todos inseridos/atualizados
                             stats['inserted'] += len(batch)
                     except:
-                        # Se não conseguiu parsear, assume sucesso
                         stats['inserted'] += len(batch)
                     
                     print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch)} itens processados")
                     
-                    # ✅ ÚNICA LINHA ADICIONADA - Heartbeat opcional
                     self.heartbeat_progress(
                         items_processed=len(batch),
                         custom_logs={'batch': batch_num, 'total_batches': total_batches}
@@ -294,54 +262,16 @@ class SupabaseClient:
                 print(f"  ❌ Batch {batch_num}/{total_batches}: {type(e).__name__}: {str(e)[:200]}")
                 stats['errors'] += len(batch)
             
-            # Pausa entre batches (exceto no último)
             if batch_num < total_batches:
                 time.sleep(0.5)
         
         return stats
     
-    def get_upsert_stats_detailed(self, tabela: str, items: List[Dict]) -> Dict:
-        """
-        Versão alternativa que verifica quais items já existem
-        para dar estatísticas precisas de inserted vs updated
-        """
-        if not items:
-            return {'inserted': 0, 'updated': 0, 'errors': 0}
-        
-        # Busca external_ids existentes
-        external_ids = [item['external_id'] for item in items if 'external_id' in item]
-        
-        if not external_ids:
-            return {'inserted': 0, 'updated': 0, 'errors': len(items)}
-        
-        try:
-            # Consulta quais já existem
-            url = f"{self.url}/rest/v1/{tabela}"
-            params = {
-                'select': 'external_id',
-                'external_id': f"in.({','.join(external_ids)})"
-            }
-            
-            r = self.session.get(url, params=params, timeout=30)
-            
-            if r.status_code == 200:
-                existing_ids = {item['external_id'] for item in r.json()}
-                
-                new_items = [item for item in items if item['external_id'] not in existing_ids]
-                update_items = [item for item in items if item['external_id'] in existing_ids]
-                
-                return {
-                    'existing_count': len(existing_ids),
-                    'new_count': len(new_items),
-                    'update_count': len(update_items)
-                }
-        except Exception as e:
-            print(f"  ⚠️ Erro ao verificar existentes: {e}")
-        
-        return {'existing_count': 0, 'new_count': 0, 'update_count': 0}
+    # ========================================================================
+    # MÉTODOS AUXILIARES (COPIADOS DO ORIGINAL)
+    # ========================================================================
     
     def test(self) -> bool:
-        """Testa conexão"""
         try:
             url = f"{self.url}/rest/v1/"
             r = self.session.get(url, timeout=10)
@@ -357,11 +287,9 @@ class SupabaseClient:
             return False
     
     def get_stats(self, tabela: str) -> Dict:
-        """Retorna estatísticas da tabela"""
         try:
             url = f"{self.url}/rest/v1/{tabela}"
             
-            # Conta total
             r = self.session.get(
                 url,
                 params={'select': 'count'},
@@ -372,7 +300,6 @@ class SupabaseClient:
             if r.status_code == 200:
                 total = int(r.headers.get('Content-Range', '0/0').split('/')[-1])
                 
-                # Conta ativos
                 r_active = self.session.get(
                     url,
                     params={'select': 'count', 'is_active': 'eq.true'},
@@ -394,37 +321,6 @@ class SupabaseClient:
             print(f"  ⚠️ Erro ao buscar stats: {e}")
         
         return {'total': 0, 'active': 0, 'inactive': 0, 'table': tabela}
-    
-    def verify_upsert(self, tabela: str, sample_external_ids: List[str]) -> Dict:
-        """
-        Verifica se alguns external_ids específicos existem no banco
-        Útil para debug
-        """
-        if not sample_external_ids:
-            return {}
-        
-        try:
-            url = f"{self.url}/rest/v1/{tabela}"
-            params = {
-                'select': 'external_id,title,updated_at,last_scraped_at',
-                'external_id': f"in.({','.join(sample_external_ids[:5])})"  # Máx 5
-            }
-            
-            r = self.session.get(url, params=params, timeout=30)
-            
-            if r.status_code == 200:
-                results = r.json()
-                print(f"\n🔍 Verificação de {len(results)} registros:")
-                for item in results:
-                    print(f"  • {item['external_id']}: {item['title'][:50]}...")
-                    print(f"    Updated: {item.get('updated_at', 'N/A')}")
-                    print(f"    Scraped: {item.get('last_scraped_at', 'N/A')}")
-                
-                return {'found': len(results), 'samples': results}
-        except Exception as e:
-            print(f"  ⚠️ Erro na verificação: {e}")
-        
-        return {'found': 0, 'samples': []}
     
     def __del__(self):
         if hasattr(self, 'session'):
