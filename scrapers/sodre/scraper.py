@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER FINAL
-✅ Espera adaptativa (sucatas corrigido)
-✅ Mapeamento correto dos campos do schema
-✅ Todos os campos da tabela sodre_items
+SODRÉ SANTORO - SCRAPER CORRIGIDO
+✅ Paginação robusta - não para prematuramente
+✅ Espera adaptativa por seção
+✅ Deduplicação na coleta
+✅ Mapeamento completo dos campos
 """
 
 import asyncio
@@ -19,25 +20,28 @@ from playwright.async_api import async_playwright
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from supabase_client import SupabaseClient
+    from supabase_client_fixed import SupabaseClient
 except:
-    SupabaseClient = None
+    try:
+        from supabase_client import SupabaseClient
+    except:
+        SupabaseClient = None
 
 
-class SodreScraperFinal:
-    """Scraper Sodré - Versão Final com schema correto"""
+class SodreScraperFixed:
+    """Scraper Sodré - Versão Corrigida"""
     
     def __init__(self, debug=False):
         self.source = 'sodre'
         self.base_url = 'https://www.sodresantoro.com.br'
         self.debug = debug
         
-        # Configuração de espera por seção
+        # ✅ Configuração otimizada por seção
         self.section_config = {
-            'veiculos': {'wait_time': 7, 'max_retries': 3},
-            'imoveis': {'wait_time': 7, 'max_retries': 3},
-            'materiais': {'wait_time': 7, 'max_retries': 3},
-            'sucatas': {'wait_time': 15, 'max_retries': 5},
+            'veiculos': {'wait_time': 7, 'max_retries': 3, 'max_pages': 200},
+            'imoveis': {'wait_time': 7, 'max_retries': 3, 'max_pages': 50},
+            'materiais': {'wait_time': 7, 'max_retries': 3, 'max_pages': 200},
+            'sucatas': {'wait_time': 12, 'max_retries': 4, 'max_pages': 200},
         }
         
         self.urls = [
@@ -57,12 +61,13 @@ class SodreScraperFinal:
         self.section_counters = {}
     
     async def scrape(self) -> List[Dict]:
-        """Scrape completo"""
+        """Scrape completo com interceptação passiva"""
         print("\n" + "="*60)
-        print("🟣 SODRÉ SANTORO - VERSÃO FINAL")
+        print("🟣 SODRÉ SANTORO - VERSÃO CORRIGIDA")
         print("="*60)
         
         all_lots = []
+        seen_lot_ids = set()  # ✅ Deduplicação na coleta
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -89,26 +94,35 @@ class SodreScraperFinal:
                             hits = data.get('hits', {}).get('hits', [])
                             
                             lots_captured = 0
+                            new_lots = 0
                             
+                            # Extrai lotes da resposta
+                            lots_to_add = []
                             if results:
-                                all_lots.extend(results)
-                                lots_captured = len(results)
+                                lots_to_add = results
                             elif hits:
-                                extracted = [hit.get('_source', hit) for hit in hits]
-                                all_lots.extend(extracted)
-                                lots_captured = len(extracted)
+                                lots_to_add = [hit.get('_source', hit) for hit in hits]
                             
-                            if lots_captured > 0:
+                            # ✅ Deduplica durante a coleta
+                            for lot in lots_to_add:
+                                lot_id = lot.get('id') or lot.get('lot_id')
+                                if lot_id and lot_id not in seen_lot_ids:
+                                    seen_lot_ids.add(lot_id)
+                                    all_lots.append(lot)
+                                    new_lots += 1
+                            
+                            if new_lots > 0:
                                 current_section['last_capture'] = time.time()
                                 section = current_section['name']
                                 if section not in self.section_counters:
                                     self.section_counters[section] = 0
-                                self.section_counters[section] += lots_captured
+                                self.section_counters[section] += new_lots
                                 
-                                print(f"     📥 API call #{current_section['api_calls']}: +{lots_captured} lotes | Total: {self.section_counters[section]}")
+                                print(f"     📥 API call #{current_section['api_calls']}: +{new_lots} lotes únicos | Total: {self.section_counters[section]}")
                             else:
                                 if self.debug:
-                                    print(f"     ⚪ API call #{current_section['api_calls']}: 0 lotes")
+                                    total = len(lots_to_add)
+                                    print(f"     ⚪ API call #{current_section['api_calls']}: 0 novos ({total} duplicatas)")
                 except:
                     pass
             
@@ -120,18 +134,19 @@ class SodreScraperFinal:
                 current_section['api_calls'] = 0
                 current_section['last_capture'] = 0
                 
-                config = self.section_config.get(section_name, {'wait_time': 7, 'max_retries': 3})
+                config = self.section_config.get(section_name, {'wait_time': 7, 'max_retries': 3, 'max_pages': 200})
                 
                 lots_before = len(all_lots)
                 
                 print(f"\n📦 {section_name.upper()}")
-                print(f"  ⏱️ Tempo de espera: {config['wait_time']}s | Tentativas: {config['max_retries']}")
+                print(f"  ⏱️ Tempo de espera: {config['wait_time']}s | Máx páginas: {config['max_pages']}")
                 
                 try:
                     await page.goto(url, wait_until="networkidle", timeout=60000)
                     
-                    print(f"  ⏳ Aguardando carregamento...")
+                    print(f"  ⏳ Aguardando carregamento inicial...")
                     
+                    # ✅ Espera inicial adaptativa
                     for attempt in range(config['max_retries']):
                         await asyncio.sleep(config['wait_time'])
                         
@@ -145,22 +160,27 @@ class SodreScraperFinal:
                             if attempt < config['max_retries'] - 1:
                                 print(f"  🔄 Tentativa {attempt + 1}: Aguardando mais dados...")
                             else:
-                                print(f"  ⚠️ Tentativa {attempt + 1}: Nenhum dado")
+                                print(f"  ⚠️ Tentativa {attempt + 1}: Nenhum dado capturado")
                     
-                    # Paginação
+                    # ✅ PAGINAÇÃO ROBUSTA
                     if len(all_lots) > lots_before:
-                        consecutive_no_data = 0
+                        # Contador de tentativas sem sucesso de CLICK (não de dados)
+                        failed_clicks = 0
+                        max_failed_clicks = 5
                         
-                        for page_num in range(2, 201):
+                        for page_num in range(2, config['max_pages'] + 1):
                             try:
+                                # Scroll
                                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                                 await asyncio.sleep(1)
                                 
-                                lots_before_click = len(all_lots)
-                                
+                                # Tenta encontrar e clicar no botão
                                 selectors = [
                                     'button[title="Avançar"]:not([disabled])',
                                     'button[title="Avançar"]',
+                                    'button:has-text("Avançar"):not([disabled])',
+                                    'button.i-mdi\\:chevron-right:not([disabled])',
+                                    '.pagination button:last-child:not([disabled])',
                                 ]
                                 
                                 button_found = False
@@ -176,40 +196,45 @@ class SodreScraperFinal:
                                             if is_visible and is_enabled:
                                                 await button.click()
                                                 button_found = True
+                                                failed_clicks = 0  # Reset contador
                                                 break
                                     except:
                                         continue
                                 
                                 if not button_found:
-                                    if page_num > 2:
-                                        print(f"  ✅ {page_num-1} páginas")
-                                    break
+                                    failed_clicks += 1
+                                    if self.debug:
+                                        print(f"    ⚠️ Botão não encontrado (tentativa {failed_clicks}/{max_failed_clicks})")
+                                    
+                                    if failed_clicks >= max_failed_clicks:
+                                        print(f"  ✅ {page_num-1} páginas - fim detectado")
+                                        break
+                                    
+                                    # Espera um pouco antes de tentar novamente
+                                    await asyncio.sleep(2)
+                                    continue
                                 
+                                print(f"  ➡️ Página {page_num}...")
+                                
+                                # ✅ Espera adaptativa após click
+                                # Não precisa verificar novos dados imediatamente,
+                                # a interceptação vai capturar quando chegarem
                                 await asyncio.sleep(5)
                                 
-                                lots_after_click = len(all_lots)
-                                new_lots = lots_after_click - lots_before_click
-                                
-                                if new_lots == 0:
-                                    consecutive_no_data += 1
-                                    if consecutive_no_data >= 3:
-                                        print(f"  ✅ {page_num} páginas")
-                                        break
-                                else:
-                                    consecutive_no_data = 0
-                            
-                            except:
+                            except Exception as e:
+                                if self.debug:
+                                    print(f"  ⚠️ Erro na página {page_num}: {type(e).__name__}")
                                 break
                     
                     section_total = len(all_lots) - lots_before
-                    print(f"  ✅ TOTAL DA SEÇÃO: {section_total} lotes")
+                    print(f"  ✅ TOTAL DA SEÇÃO: {section_total} lotes únicos")
                 
                 except Exception as e:
                     print(f"  ❌ Erro: {e}")
             
             await browser.close()
         
-        print(f"\n✅ {len(all_lots)} lotes capturados no total")
+        print(f"\n✅ {len(all_lots)} lotes únicos capturados no total")
         
         # Processa lotes
         items = []
@@ -245,8 +270,13 @@ class SodreScraperFinal:
         ✅ Todos os campos mapeados corretamente
         """
         try:
-            lot_id = lot.get('id')
+            lot_id = lot.get('id') or lot.get('lot_id')
             if not lot_id:
+                return None
+            
+            try:
+                lot_id = int(lot_id)
+            except:
                 return None
             
             external_id = f"sodre_{lot_id}"
@@ -255,22 +285,27 @@ class SodreScraperFinal:
             item = {
                 # IDs e identificadores
                 'external_id': external_id,
-                'lot_id': self._parse_int(lot_id),
+                'lot_id': lot_id,
                 'lot_number': self._safe_str(lot.get('lot_number')),
                 'lot_inspection_number': self._safe_str(lot.get('lot_inspection_number')),
                 'lot_inspection_id': self._parse_int(lot.get('lot_inspection_id')),
                 'auction_id': self._parse_int(lot.get('auction_id')),
                 
                 # Categorias e segmentos
-                'category': self._safe_str(lot.get('category')),
+                'category': self._safe_str(lot.get('category') or lot.get('lot_category')),
                 'segment_id': self._safe_str(lot.get('segment_id')),
                 'segment_label': self._safe_str(lot.get('segment_label')),
                 'segment_slug': self._safe_str(lot.get('segment_slug')),
                 'lot_category': self._safe_str(lot.get('lot_category')),
                 
                 # Textos principais
-                'title': self._safe_str(lot.get('title')) or self._safe_str(lot.get('lot_title')) or 'Sem título',
-                'description': self._safe_str(lot.get('description')) or self._safe_str(lot.get('lot_description')),
+                'title': (
+                    self._safe_str(lot.get('title')) or 
+                    self._safe_str(lot.get('lot_title')) or 
+                    self._safe_str(lot.get('lot_type_name')) or 
+                    'Sem título'
+                ),
+                'description': self._safe_str(lot.get('description') or lot.get('lot_description')),
                 
                 # Localização
                 'lot_location': self._safe_str(lot.get('lot_location')),
@@ -307,11 +342,11 @@ class SodreScraperFinal:
                 'lot_transmission': self._safe_str(lot.get('lot_transmission')),
                 'lot_sinister': self._safe_str(lot.get('lot_sinister')),
                 'lot_origin': self._safe_str(lot.get('lot_origin')),
-                'lot_optionals': lot.get('lot_optionals') if isinstance(lot.get('lot_optionals'), list) else None,
+                'lot_optionals': self._parse_optionals(lot.get('lot_optionals')),
                 'lot_tags': self._safe_str(lot.get('lot_tags')),
                 
                 # Imagem e link
-                'image_url': self._safe_str(lot.get('image_url') or lot.get('lot_image_url')),
+                'image_url': self._parse_image(lot.get('image_url') or lot.get('lot_image_url') or lot.get('lot_pictures')),
                 'link': f"{self.base_url}/lote/{lot_id}",
                 
                 # Status e flags
@@ -319,7 +354,7 @@ class SodreScraperFinal:
                 'lot_status_id': self._parse_int(lot.get('lot_status_id')),
                 'lot_is_judicial': bool(lot.get('lot_is_judicial', False)),
                 'lot_is_scrap': bool(lot.get('lot_is_scrap', False)),
-                'lot_financeable': bool(lot.get('lot_financeable', False)),
+                'lot_financeable': bool(lot.get('lot_financeable') or lot.get('lot_status_financeable', False)),
                 'is_highlight': bool(lot.get('is_highlight', False)),
                 'lot_test': bool(lot.get('lot_test', False)),
                 'lot_visits': self._parse_int(lot.get('lot_visits')) or 0,
@@ -352,7 +387,7 @@ class SodreScraperFinal:
                 'lot_subcategory': self._safe_str(lot.get('lot_subcategory') or lot.get('subcategory')),
                 'lot_type_name': self._safe_str(lot.get('lot_type_name')),
                 
-                # Metadata - campos extras que não têm coluna específica
+                # Metadata
                 'metadata': self._build_metadata(lot),
             }
             
@@ -368,10 +403,9 @@ class SodreScraperFinal:
         """Constrói metadata com campos extras"""
         metadata = {}
         
-        # Campos que vão para metadata
+        # Campos extras
         extra_fields = [
-            'lot_seller', 'lot_type', 'lot_condition',
-            'lot_warranty', 'lot_delivery_time',
+            'segment_base', 'search_terms',
         ]
         
         for field in extra_fields:
@@ -380,6 +414,26 @@ class SodreScraperFinal:
                 metadata[field] = val
         
         return metadata if metadata else {}
+    
+    def _parse_optionals(self, value):
+        """Parse lot_optionals para array"""
+        if not value:
+            return None
+        if isinstance(value, list):
+            return [str(opt) for opt in value if opt]
+        if isinstance(value, str):
+            return [value]
+        return None
+    
+    def _parse_image(self, value):
+        """Parse image_url ou lot_pictures"""
+        if not value:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list) and len(value) > 0:
+            return value[0]
+        return None
     
     def _safe_str(self, value) -> str:
         if value is None:
@@ -398,7 +452,6 @@ class SodreScraperFinal:
                 value = value.replace('Z', '+00:00')
                 if 'T' in value:
                     return value
-                # Tenta parsear outros formatos
                 try:
                     dt = datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
                     return dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
@@ -427,7 +480,7 @@ class SodreScraperFinal:
 
 async def main():
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER FINAL")
+    print("🚀 SODRÉ SANTORO - SCRAPER CORRIGIDO")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
@@ -446,11 +499,11 @@ async def main():
             if supabase.test():
                 supabase.heartbeat_start(metadata={
                     'scraper': 'sodre',
-                    'version': 'final',
+                    'version': 'corrigida',
                 })
         
         print("\n🔥 FASE 1: COLETANDO DADOS")
-        scraper = SodreScraperFinal(debug=True)
+        scraper = SodreScraperFixed(debug=False)
         items = await scraper.scrape()
         
         print(f"\n✅ Total coletado: {len(items)} itens")
@@ -481,14 +534,17 @@ async def main():
             print(f"\n  📤 sodre_items: {len(items)} itens")
             stats = supabase.upsert('sodre_items', items)
             
-            print(f"    ✅ Inseridos: {stats['inserted']}")
-            print(f"    🔄 Atualizados: {stats['updated']}")
+            print(f"    ✅ Inseridos/Atualizados: {stats['inserted']}")
+            if stats.get('duplicates_removed', 0) > 0:
+                print(f"    🔄 Duplicatas removidas: {stats['duplicates_removed']}")
+            if stats['errors'] > 0:
+                print(f"    ⚠️ Erros: {stats['errors']}")
             
             supabase.heartbeat_finish(status='inactive', final_stats={
                 'items_collected': len(items),
                 'items_inserted': stats['inserted'],
-                'items_updated': stats['updated'],
                 'items_with_bids': scraper.stats['with_bids'],
+                'duplicates_removed': stats.get('duplicates_removed', 0),
             })
     
     except Exception as e:

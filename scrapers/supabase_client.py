@@ -3,6 +3,7 @@
 """
 SUPABASE CLIENT - VERSÃO CORRIGIDA
 ✅ Normaliza chaves antes de enviar (fix PGRST102)
+✅ Remove duplicatas DENTRO do batch (fix PGRST21000)
 ✅ Todos os items no batch têm as mesmas chaves
 """
 
@@ -14,7 +15,7 @@ from typing import List, Dict, Optional
 
 
 class SupabaseClient:
-    """Cliente para Supabase - Com normalização de chaves"""
+    """Cliente para Supabase - Com normalização de chaves e deduplicação"""
     
     def __init__(self, service_name: str = None, service_type: str = 'scraper'):
         self.url = os.getenv('SUPABASE_URL')
@@ -45,7 +46,7 @@ class SupabaseClient:
         self.items_processed = 0
     
     # ========================================================================
-    # MÉTODOS HEARTBEAT (COPIADOS DO ORIGINAL)
+    # MÉTODOS HEARTBEAT
     # ========================================================================
     
     def heartbeat_start(self, metadata: Optional[Dict] = None) -> bool:
@@ -157,8 +158,35 @@ class SupabaseClient:
         return self.heartbeat_update(status='error', error_message=error_message)
     
     # ========================================================================
-    # NOVO: NORMALIZAÇÃO DE CHAVES
+    # NORMALIZAÇÃO E DEDUPLICAÇÃO
     # ========================================================================
+    
+    def _deduplicate_batch(self, items: List[Dict]) -> tuple[List[Dict], int]:
+        """
+        Remove duplicatas DENTRO do batch baseado em external_id
+        ✅ Resolve PGRST21000: "cannot affect row a second time"
+        
+        Retorna: (items_únicos, quantidade_duplicatas)
+        """
+        if not items:
+            return items, 0
+        
+        seen = {}
+        unique_items = []
+        duplicates = 0
+        
+        for item in items:
+            external_id = item.get('external_id')
+            if not external_id:
+                continue
+                
+            if external_id not in seen:
+                seen[external_id] = True
+                unique_items.append(item)
+            else:
+                duplicates += 1
+        
+        return unique_items, duplicates
     
     def _normalize_batch_keys(self, items: List[Dict]) -> List[Dict]:
         """
@@ -189,11 +217,12 @@ class SupabaseClient:
     
     def upsert(self, tabela: str, items: List[Dict]) -> Dict:
         """
-        Upsert com normalização de chaves
+        Upsert com deduplicação e normalização de chaves
+        ✅ Fix PGRST21000: Remove duplicatas dentro do batch
         ✅ Fix PGRST102: Normaliza chaves antes de enviar
         """
         if not items:
-            return {'inserted': 0, 'updated': 0, 'errors': 0, 'total': 0}
+            return {'inserted': 0, 'updated': 0, 'errors': 0, 'total': 0, 'duplicates_removed': 0}
         
         # Prepara timestamps
         now = datetime.now().isoformat()
@@ -204,7 +233,14 @@ class SupabaseClient:
             if 'created_at' in item:
                 del item['created_at']
         
-        stats = {'inserted': 0, 'updated': 0, 'errors': 0, 'total': len(items)}
+        stats = {
+            'inserted': 0, 
+            'updated': 0, 
+            'errors': 0, 
+            'total': len(items),
+            'duplicates_removed': 0
+        }
+        
         batch_size = 500
         total_batches = (len(items) + batch_size - 1) // batch_size
         
@@ -220,10 +256,21 @@ class SupabaseClient:
             batch_num = (i // batch_size) + 1
             
             try:
-                # ✅ NORMALIZA CHAVES DO BATCH
-                normalized_batch = self._normalize_batch_keys(batch)
+                # ✅ REMOVE DUPLICATAS DO BATCH
+                batch_unique, batch_dupes = self._deduplicate_batch(batch)
                 
-                # Envia batch normalizado
+                if batch_dupes > 0:
+                    stats['duplicates_removed'] += batch_dupes
+                    print(f"  🔄 Batch {batch_num}/{total_batches}: {batch_dupes} duplicatas removidas")
+                
+                if not batch_unique:
+                    print(f"  ⚠️ Batch {batch_num}/{total_batches}: vazio após deduplicação")
+                    continue
+                
+                # ✅ NORMALIZA CHAVES DO BATCH
+                normalized_batch = self._normalize_batch_keys(batch_unique)
+                
+                # Envia batch normalizado e deduplicado
                 r = self.session.post(
                     url,
                     json=normalized_batch,
@@ -237,14 +284,14 @@ class SupabaseClient:
                         if isinstance(response_data, list):
                             stats['inserted'] += len(response_data)
                         else:
-                            stats['inserted'] += len(batch)
+                            stats['inserted'] += len(batch_unique)
                     except:
-                        stats['inserted'] += len(batch)
+                        stats['inserted'] += len(batch_unique)
                     
-                    print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch)} itens processados")
+                    print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch_unique)} itens processados")
                     
                     self.heartbeat_progress(
-                        items_processed=len(batch),
+                        items_processed=len(batch_unique),
                         custom_logs={'batch': batch_num, 'total_batches': total_batches}
                     )
                 
@@ -252,7 +299,7 @@ class SupabaseClient:
                     error_msg = r.text[:300] if r.text else 'Sem detalhes'
                     print(f"  ❌ Batch {batch_num}/{total_batches}: HTTP {r.status_code}")
                     print(f"     Erro: {error_msg}")
-                    stats['errors'] += len(batch)
+                    stats['errors'] += len(batch_unique)
             
             except requests.exceptions.Timeout:
                 print(f"  ⏱️ Batch {batch_num}/{total_batches}: Timeout (120s)")
@@ -268,7 +315,7 @@ class SupabaseClient:
         return stats
     
     # ========================================================================
-    # MÉTODOS AUXILIARES (COPIADOS DO ORIGINAL)
+    # MÉTODOS AUXILIARES
     # ========================================================================
     
     def test(self) -> bool:
