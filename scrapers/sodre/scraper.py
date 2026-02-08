@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER CORRIGIDO
-✅ Espera adaptativa por seção (sucatas precisa mais tempo)
-✅ Múltiplas tentativas antes de desistir
-✅ Detecta quando API retorna dados vazios vs dados reais
+SODRÉ SANTORO - SCRAPER FINAL
+✅ Espera adaptativa (sucatas corrigido)
+✅ Mapeamento correto dos campos do schema
+✅ Todos os campos da tabela sodre_items
 """
 
 import asyncio
@@ -24,20 +24,20 @@ except:
     SupabaseClient = None
 
 
-class SodreScraperFixed:
-    """Scraper Sodré com espera adaptativa"""
+class SodreScraperFinal:
+    """Scraper Sodré - Versão Final com schema correto"""
     
     def __init__(self, debug=False):
         self.source = 'sodre'
         self.base_url = 'https://www.sodresantoro.com.br'
         self.debug = debug
         
-        # ✅ CONFIGURAÇÃO DE ESPERA POR SEÇÃO
+        # Configuração de espera por seção
         self.section_config = {
             'veiculos': {'wait_time': 7, 'max_retries': 3},
             'imoveis': {'wait_time': 7, 'max_retries': 3},
             'materiais': {'wait_time': 7, 'max_retries': 3},
-            'sucatas': {'wait_time': 15, 'max_retries': 5},  # ✅ MAIS TEMPO!
+            'sucatas': {'wait_time': 15, 'max_retries': 5},
         }
         
         self.urls = [
@@ -57,9 +57,9 @@ class SodreScraperFixed:
         self.section_counters = {}
     
     async def scrape(self) -> List[Dict]:
-        """Scrape completo com interceptação passiva"""
+        """Scrape completo"""
         print("\n" + "="*60)
-        print("🟣 SODRÉ SANTORO - VERSÃO CORRIGIDA")
+        print("🟣 SODRÉ SANTORO - VERSÃO FINAL")
         print("="*60)
         
         all_lots = []
@@ -108,7 +108,7 @@ class SodreScraperFixed:
                                 print(f"     📥 API call #{current_section['api_calls']}: +{lots_captured} lotes | Total: {self.section_counters[section]}")
                             else:
                                 if self.debug:
-                                    print(f"     ⚪ API call #{current_section['api_calls']}: 0 lotes (ainda carregando...)")
+                                    print(f"     ⚪ API call #{current_section['api_calls']}: 0 lotes")
                 except:
                     pass
             
@@ -130,7 +130,6 @@ class SodreScraperFixed:
                 try:
                     await page.goto(url, wait_until="networkidle", timeout=60000)
                     
-                    # ✅ ESPERA ADAPTATIVA COM VERIFICAÇÃO
                     print(f"  ⏳ Aguardando carregamento...")
                     
                     for attempt in range(config['max_retries']):
@@ -146,9 +145,9 @@ class SodreScraperFixed:
                             if attempt < config['max_retries'] - 1:
                                 print(f"  🔄 Tentativa {attempt + 1}: Aguardando mais dados...")
                             else:
-                                print(f"  ⚠️ Tentativa {attempt + 1}: Nenhum dado após {config['wait_time'] * config['max_retries']}s")
+                                print(f"  ⚠️ Tentativa {attempt + 1}: Nenhum dado")
                     
-                    # ✅ PAGINAÇÃO (se aplicável)
+                    # Paginação
                     if len(all_lots) > lots_before:
                         consecutive_no_data = 0
                         
@@ -159,11 +158,9 @@ class SodreScraperFixed:
                                 
                                 lots_before_click = len(all_lots)
                                 
-                                # Tenta clicar no botão de próxima página
                                 selectors = [
                                     'button[title="Avançar"]:not([disabled])',
                                     'button[title="Avançar"]',
-                                    'button:has-text("Avançar"):not([disabled])',
                                 ]
                                 
                                 button_found = False
@@ -184,7 +181,7 @@ class SodreScraperFixed:
                                         continue
                                 
                                 if not button_found:
-                                    if page_num > 2:  # Só mostra se paginou
+                                    if page_num > 2:
                                         print(f"  ✅ {page_num-1} páginas")
                                     break
                                 
@@ -196,21 +193,19 @@ class SodreScraperFixed:
                                 if new_lots == 0:
                                     consecutive_no_data += 1
                                     if consecutive_no_data >= 3:
-                                        print(f"  ✅ {page_num} páginas (sem novos dados)")
+                                        print(f"  ✅ {page_num} páginas")
                                         break
                                 else:
                                     consecutive_no_data = 0
                             
-                            except Exception as e:
-                                if self.debug:
-                                    print(f"  ⚠️ Erro na paginação: {type(e).__name__}")
+                            except:
                                 break
                     
                     section_total = len(all_lots) - lots_before
                     print(f"  ✅ TOTAL DA SEÇÃO: {section_total} lotes")
                 
                 except Exception as e:
-                    print(f"  ❌ Erro na seção: {e}")
+                    print(f"  ❌ Erro: {e}")
             
             await browser.close()
         
@@ -226,7 +221,6 @@ class SodreScraperFixed:
                 if item:
                     items.append(item)
                     
-                    # Contabiliza por categoria
                     cat = item.get('category', 'unknown')
                     if cat not in categories:
                         categories[cat] = {'total': 0, 'errors': 0}
@@ -236,72 +230,156 @@ class SodreScraperFixed:
                         self.stats['with_bids'] += 1
             except Exception as e:
                 self.stats['errors'] += 1
-                if self.debug:
-                    print(f"  ⚠️ Erro ao processar lote: {e}")
         
         self.stats['total_scraped'] = len(items)
         
         print(f"\n📊 Por Categoria:")
         for cat, stats in sorted(categories.items()):
-            print(f"  • {cat}: {stats['total']}/{stats['total']} OK ({stats['errors']} erros)")
+            print(f"  • {cat}: {stats['total']}/{stats['total']} OK")
         
         return items
     
     def _normalize_lot(self, lot: Dict) -> Dict:
-        """Normaliza um lote para o formato do banco"""
+        """
+        Normaliza lote para o schema exato de sodre_items
+        ✅ Todos os campos mapeados corretamente
+        """
         try:
-            # Campo obrigatório
             lot_id = lot.get('id')
             if not lot_id:
                 return None
             
             external_id = f"sodre_{lot_id}"
             
-            # Metadados flexíveis
-            metadata = {}
-            for key in ['lot_seller', 'lot_type_name', 'lot_subcategory']:
-                val = lot.get(key)
-                if val:
-                    metadata[key] = val
-            
+            # ✅ MAPEAMENTO COMPLETO CONFORME SCHEMA
             item = {
+                # IDs e identificadores
                 'external_id': external_id,
-                'source': self.source,
-                'lot_id': str(lot_id),
-                'title': self._safe_str(lot.get('title')) or self._safe_str(lot.get('lot_title')),
-                'description': self._safe_str(lot.get('description')) or self._safe_str(lot.get('lot_description')),
-                'category': self._safe_str(lot.get('category')),
-                'subcategory': self._safe_str(lot.get('subcategory')),
+                'lot_id': self._parse_int(lot_id),
+                'lot_number': self._safe_str(lot.get('lot_number')),
+                'lot_inspection_number': self._safe_str(lot.get('lot_inspection_number')),
+                'lot_inspection_id': self._parse_int(lot.get('lot_inspection_id')),
+                'auction_id': self._parse_int(lot.get('auction_id')),
                 
-                # URLs
-                'url': f"{self.base_url}/lote/{lot_id}",
-                'lot_url': self._safe_str(lot.get('lot_url')),
-                'image_url': self._safe_str(lot.get('image_url')) or self._safe_str(lot.get('lot_image_url')),
+                # Categorias e segmentos
+                'category': self._safe_str(lot.get('category')),
+                'segment_id': self._safe_str(lot.get('segment_id')),
+                'segment_label': self._safe_str(lot.get('segment_label')),
+                'segment_slug': self._safe_str(lot.get('segment_slug')),
+                'lot_category': self._safe_str(lot.get('lot_category')),
+                
+                # Textos principais
+                'title': self._safe_str(lot.get('title')) or self._safe_str(lot.get('lot_title')) or 'Sem título',
+                'description': self._safe_str(lot.get('description')) or self._safe_str(lot.get('lot_description')),
+                
+                # Localização
+                'lot_location': self._safe_str(lot.get('lot_location')),
+                'city': self._safe_str(lot.get('city')),
+                'state': self._safe_str(lot.get('state')),
                 
                 # Leilão
-                'auction_id': self._safe_str(lot.get('auction_id')),
-                'auction_date': self._parse_datetime(lot.get('auction_date')),
-                'auction_type': self._safe_str(lot.get('auction_type')),
+                'auction_name': self._safe_str(lot.get('auction_name')),
+                'auction_status': self._safe_str(lot.get('auction_status')),
+                'auction_date_init': self._parse_datetime(lot.get('auction_date_init') or lot.get('auction_date')),
+                'auction_date_2': self._parse_datetime(lot.get('auction_date_2')),
+                'auction_date_end': self._parse_datetime(lot.get('auction_date_end')),
                 
-                # Valores
-                'initial_bid': self._parse_numeric(lot.get('initial_bid')),
-                'current_bid': self._parse_numeric(lot.get('current_bid')),
-                'minimum_bid': self._parse_numeric(lot.get('minimum_bid')),
+                # Leiloeiro e cliente
+                'auctioneer_name': self._safe_str(lot.get('auctioneer_name')),
+                'client_id': self._parse_int(lot.get('client_id')),
+                'client_name': self._safe_str(lot.get('client_name')),
                 
-                # Lance
+                # Lances
+                'bid_initial': self._parse_numeric(lot.get('bid_initial') or lot.get('initial_bid')),
+                'bid_actual': self._parse_numeric(lot.get('bid_actual') or lot.get('current_bid')),
+                'bid_has_bid': bool(lot.get('bid_has_bid', False)),
+                'bid_user_nickname': self._safe_str(lot.get('bid_user_nickname')),
+                
+                # Veículos
+                'lot_brand': self._safe_str(lot.get('lot_brand')),
+                'lot_model': self._safe_str(lot.get('lot_model')),
+                'lot_year_manufacture': self._parse_int(lot.get('lot_year_manufacture')),
+                'lot_year_model': self._parse_int(lot.get('lot_year_model')),
+                'lot_plate': self._safe_str(lot.get('lot_plate')),
+                'lot_color': self._safe_str(lot.get('lot_color')),
+                'lot_km': self._parse_int(lot.get('lot_km')),
+                'lot_fuel': self._safe_str(lot.get('lot_fuel')),
+                'lot_transmission': self._safe_str(lot.get('lot_transmission')),
+                'lot_sinister': self._safe_str(lot.get('lot_sinister')),
+                'lot_origin': self._safe_str(lot.get('lot_origin')),
+                'lot_optionals': lot.get('lot_optionals') if isinstance(lot.get('lot_optionals'), list) else None,
+                'lot_tags': self._safe_str(lot.get('lot_tags')),
+                
+                # Imagem e link
+                'image_url': self._safe_str(lot.get('image_url') or lot.get('lot_image_url')),
+                'link': f"{self.base_url}/lote/{lot_id}",
+                
+                # Status e flags
+                'lot_status': self._safe_str(lot.get('lot_status')),
+                'lot_status_id': self._parse_int(lot.get('lot_status_id')),
+                'lot_is_judicial': bool(lot.get('lot_is_judicial', False)),
+                'lot_is_scrap': bool(lot.get('lot_is_scrap', False)),
+                'lot_financeable': bool(lot.get('lot_financeable', False)),
+                'is_highlight': bool(lot.get('is_highlight', False)),
+                'lot_test': bool(lot.get('lot_test', False)),
+                'lot_visits': self._parse_int(lot.get('lot_visits')) or 0,
+                
+                # Source e controle
+                'source': self.source,
+                'is_active': True,
                 'has_bid': bool(lot.get('bid_has_bid', False)),
                 
-                # Campos judiciais
+                # Campos judiciais (imóveis)
                 'lot_judicial_process': self._safe_str(lot.get('lot_judicial_process')),
                 'lot_judicial_action': self._safe_str(lot.get('lot_judicial_action')),
+                'lot_judicial_executor': self._safe_str(lot.get('lot_judicial_executor')),
+                'lot_judicial_executed': self._safe_str(lot.get('lot_judicial_executed')),
+                'lot_judicial_judge': self._safe_str(lot.get('lot_judicial_judge')),
+                'tj_praca_value': self._parse_numeric(lot.get('tj_praca_value')),
+                'tj_praca_discount': self._parse_numeric(lot.get('tj_praca_discount')),
                 
-                # Metadados
-                'metadata': {k: v for k, v in metadata.items() if v is not None},
+                # Imóveis - endereço
+                'lot_neighborhood': self._safe_str(lot.get('lot_neighborhood')),
+                'lot_street': self._safe_str(lot.get('lot_street')),
+                
+                # Imóveis - características
+                'lot_dormitories': self._parse_int(lot.get('lot_dormitories')),
+                'lot_useful_area': self._parse_numeric(lot.get('lot_useful_area')),
+                'lot_total_area': self._parse_numeric(lot.get('lot_total_area')),
+                'lot_suites': self._parse_int(lot.get('lot_suites')),
+                
+                # Materiais
+                'lot_subcategory': self._safe_str(lot.get('lot_subcategory') or lot.get('subcategory')),
+                'lot_type_name': self._safe_str(lot.get('lot_type_name')),
+                
+                # Metadata - campos extras que não têm coluna específica
+                'metadata': self._build_metadata(lot),
             }
             
-            return item
-        except:
+            # Remove None values
+            return {k: v for k, v in item.items() if v is not None}
+        
+        except Exception as e:
+            if self.debug:
+                print(f"  ⚠️ Erro ao normalizar lote {lot.get('id')}: {e}")
             return None
+    
+    def _build_metadata(self, lot: Dict) -> Dict:
+        """Constrói metadata com campos extras"""
+        metadata = {}
+        
+        # Campos que vão para metadata
+        extra_fields = [
+            'lot_seller', 'lot_type', 'lot_condition',
+            'lot_warranty', 'lot_delivery_time',
+        ]
+        
+        for field in extra_fields:
+            val = lot.get(field)
+            if val:
+                metadata[field] = val
+        
+        return metadata if metadata else {}
     
     def _safe_str(self, value) -> str:
         if value is None:
@@ -320,6 +398,12 @@ class SodreScraperFixed:
                 value = value.replace('Z', '+00:00')
                 if 'T' in value:
                     return value
+                # Tenta parsear outros formatos
+                try:
+                    dt = datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+                    return dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+                except:
+                    pass
         except:
             pass
         return None
@@ -331,11 +415,19 @@ class SodreScraperFixed:
             return float(value)
         except:
             return None
+    
+    def _parse_int(self, value):
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except:
+            return None
 
 
 async def main():
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER CORRIGIDO")
+    print("🚀 SODRÉ SANTORO - SCRAPER FINAL")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
@@ -344,7 +436,6 @@ async def main():
     supabase = None
     
     try:
-        # Inicia Supabase se disponível
         if SupabaseClient:
             print("\n💓 Iniciando sistema de heartbeat...")
             supabase = SupabaseClient(
@@ -355,13 +446,11 @@ async def main():
             if supabase.test():
                 supabase.heartbeat_start(metadata={
                     'scraper': 'sodre',
-                    'version': 'fixed',
-                    'sections': 4,
+                    'version': 'final',
                 })
         
-        # Coleta dados
         print("\n🔥 FASE 1: COLETANDO DADOS")
-        scraper = SodreScraperFixed(debug=True)
+        scraper = SodreScraperFinal(debug=True)
         items = await scraper.scrape()
         
         print(f"\n✅ Total coletado: {len(items)} itens")
