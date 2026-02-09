@@ -540,7 +540,8 @@ async def main():
             if stats['errors'] > 0:
                 print(f"    ⚠️ Erros: {stats['errors']}")
             
-            supabase.heartbeat_finish(status='inactive', final_stats={
+            # ✅ Usa heartbeat_success() para manter status='active' e event='completed'
+            supabase.heartbeat_success(final_stats={
                 'items_collected': len(items),
                 'items_inserted': stats['inserted'],
                 'items_with_bids': scraper.stats['with_bids'],
