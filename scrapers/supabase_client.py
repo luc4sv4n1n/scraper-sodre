@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - VERSÃO CORRIGIDA
+SUPABASE CLIENT - VERSÃO CORRIGIDA (SODRÉ)
+✅ Heartbeat corrigido: envia como array + on_conflict
 ✅ Normaliza chaves antes de enviar (fix PGRST102)
 ✅ Remove duplicatas DENTRO do batch (fix PGRST21000)
 ✅ Todos os items no batch têm as mesmas chaves
@@ -22,7 +23,7 @@ class SupabaseClient:
         self.key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
         
         if not self.url or not self.key:
-            raise ValueError("⚠ Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY")
+            raise ValueError("⚠️ Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY")
         
         self.url = self.url.rstrip('/')
         
@@ -46,15 +47,19 @@ class SupabaseClient:
         self.items_processed = 0
     
     # ========================================================================
-    # MÉTODOS HEARTBEAT
+    # MÉTODOS HEARTBEAT - CORRIGIDOS
     # ========================================================================
     
     def heartbeat_start(self, metadata: Optional[Dict] = None) -> bool:
+        """
+        ✅ FIX: Envia como array [payload] e usa on_conflict=service_name
+        """
         if not self.heartbeat_enabled:
             return False
         
         try:
-            url = f"{self.url}/rest/v1/infra_actions"
+            # ✅ FIX: Adiciona on_conflict na URL
+            url = f"{self.url}/rest/v1/infra_actions?on_conflict=service_name"
             
             payload = {
                 'service_name': self.service_name,
@@ -75,7 +80,8 @@ class SupabaseClient:
                 'Prefer': 'return=representation'
             }
             
-            r = self.session.post(url, json=payload, headers=heartbeat_headers, timeout=10)
+            # ✅ FIX: Envia como ARRAY [payload] e timeout maior
+            r = self.session.post(url, json=[payload], headers=heartbeat_headers, timeout=30)
             
             if r.status_code in (200, 201):
                 data = r.json()
@@ -83,6 +89,10 @@ class SupabaseClient:
                     self.heartbeat_id = data[0].get('id')
                     print(f"  💓 Heartbeat iniciado: {self.heartbeat_id}")
                     return True
+                else:
+                    print(f"  ⚠️ Heartbeat: resposta vazia (status {r.status_code})")
+            else:
+                print(f"  ⚠️ Heartbeat: HTTP {r.status_code} - {r.text[:200]}")
         
         except Exception as e:
             print(f"  ⚠️ Erro ao iniciar heartbeat: {e}")
@@ -90,12 +100,15 @@ class SupabaseClient:
         return False
     
     def heartbeat_update(self, status: str = 'active', custom_logs: Optional[Dict] = None, error_message: Optional[str] = None) -> bool:
+        """
+        ✅ FIX: Usa PATCH com filtro id=eq.X + on_conflict
+        """
         if not self.heartbeat_enabled or not self.heartbeat_id:
             return False
         
         try:
-            url = f"{self.url}/rest/v1/infra_actions"
-            params = {'id': f'eq.{self.heartbeat_id}'}
+            # ✅ FIX: Usa filtro + on_conflict
+            url = f"{self.url}/rest/v1/infra_actions?id=eq.{self.heartbeat_id}&on_conflict=service_name"
             
             elapsed = time.time() - self.start_time
             
@@ -123,7 +136,8 @@ class SupabaseClient:
                 'Accept-Profile': 'public',
             }
             
-            r = self.session.patch(url, params=params, json=payload, headers=heartbeat_headers, timeout=10)
+            # ✅ FIX: Timeout maior
+            r = self.session.patch(url, json=payload, headers=heartbeat_headers, timeout=30)
             
             return r.status_code == 204
         
