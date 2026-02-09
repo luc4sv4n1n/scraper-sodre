@@ -45,6 +45,15 @@ class SupabaseClient:
         self.heartbeat_enabled = bool(service_name)
         self.start_time = time.time()
         self.items_processed = 0
+        
+        # Metrics (como no Superbid)
+        self.heartbeat_metrics = {
+            'items_processed': 0,
+            'items_inserted': 0,
+            'items_updated': 0,
+            'errors': 0,
+            'warnings': 0,
+        }
     
     # ========================================================================
     # MÉTODOS HEARTBEAT - CORRIGIDOS
@@ -53,6 +62,7 @@ class SupabaseClient:
     def heartbeat_start(self, metadata: Optional[Dict] = None) -> bool:
         """
         ✅ FIX: Envia como array [payload] e usa on_conflict=service_name
+        ✅ Logs estruturados como Superbid (event, message, metrics)
         """
         if not self.heartbeat_enabled:
             return False
@@ -61,15 +71,24 @@ class SupabaseClient:
             # ✅ FIX: Adiciona on_conflict na URL
             url = f"{self.url}/rest/v1/infra_actions?on_conflict=service_name"
             
+            # ✅ Logs estruturados
+            logs = {
+                'event': 'start',
+                'message': 'Scraper iniciado',
+                'timestamp': datetime.now().isoformat(),
+                'metrics': self.heartbeat_metrics.copy(),
+                'elapsed_seconds': 0,
+            }
+            
+            if metadata:
+                logs.update(metadata)
+            
             payload = {
                 'service_name': self.service_name,
                 'service_type': self.service_type,
                 'status': 'active',
                 'last_activity': datetime.now().isoformat(),
-                'logs': {
-                    'started_at': datetime.now().isoformat(),
-                    'items_processed': 0,
-                },
+                'logs': logs,
                 'metadata': metadata or {},
             }
             
@@ -77,7 +96,7 @@ class SupabaseClient:
                 **self.headers,
                 'Content-Profile': 'public',
                 'Accept-Profile': 'public',
-                'Prefer': 'return=representation'
+                'Prefer': 'resolution=merge-duplicates,return=representation'
             }
             
             # ✅ FIX: Envia como ARRAY [payload] e timeout maior
@@ -102,6 +121,7 @@ class SupabaseClient:
     def heartbeat_update(self, status: str = 'active', custom_logs: Optional[Dict] = None, error_message: Optional[str] = None) -> bool:
         """
         ✅ FIX: Usa PATCH com filtro id=eq.X + on_conflict
+        ✅ Logs estruturados como Superbid
         """
         if not self.heartbeat_enabled or not self.heartbeat_id:
             return False
@@ -112,9 +132,12 @@ class SupabaseClient:
             
             elapsed = time.time() - self.start_time
             
+            # ✅ Logs estruturados
             logs = {
-                'last_update': datetime.now().isoformat(),
-                'items_processed': self.items_processed,
+                'event': 'progress',
+                'message': f"Processados {self.heartbeat_metrics['items_processed']} itens",
+                'timestamp': datetime.now().isoformat(),
+                'metrics': self.heartbeat_metrics.copy(),
                 'elapsed_seconds': round(elapsed, 2),
             }
             
@@ -134,6 +157,7 @@ class SupabaseClient:
                 **self.headers,
                 'Content-Profile': 'public',
                 'Accept-Profile': 'public',
+                'Prefer': 'resolution=merge-duplicates'
             }
             
             # ✅ FIX: Timeout maior
@@ -145,10 +169,42 @@ class SupabaseClient:
             return False
     
     def heartbeat_progress(self, items_processed: int = 0, custom_logs: Optional[Dict] = None) -> bool:
+        """Atualiza progresso - incrementa metrics"""
         self.items_processed += items_processed
+        self.heartbeat_metrics['items_processed'] += items_processed
         return self.heartbeat_update(status='active', custom_logs=custom_logs)
     
+    def heartbeat_success(self, final_stats: Optional[Dict] = None) -> bool:
+        """
+        ✅ Registra conclusão com SUCESSO - mantém status='active'
+        Como no Superbid - permite monitorar que rodou com sucesso
+        """
+        if not self.heartbeat_enabled or not self.heartbeat_id:
+            return False
+        
+        elapsed = time.time() - self.start_time
+        
+        # ✅ Logs estruturados
+        custom_logs = {
+            'event': 'completed',
+            'message': 'Scraper concluído com sucesso',
+            'timestamp': datetime.now().isoformat(),
+            'final_stats': final_stats or {},
+            'total_elapsed_seconds': round(elapsed, 2),
+        }
+        
+        success = self.heartbeat_update(status='active', custom_logs=custom_logs)
+        
+        if success:
+            print(f"  💓 Heartbeat finalizado: {self.heartbeat_metrics['items_processed']} itens")
+        
+        return success
+    
     def heartbeat_finish(self, status: str = 'inactive', final_stats: Optional[Dict] = None) -> bool:
+        """
+        ⚠️ Opcional: Muda status para 'inactive'
+        Use heartbeat_success() para manter 'active' (recomendado)
+        """
         if not self.heartbeat_enabled or not self.heartbeat_id:
             return False
         
@@ -297,10 +353,13 @@ class SupabaseClient:
                         response_data = r.json()
                         if isinstance(response_data, list):
                             stats['inserted'] += len(response_data)
+                            self.heartbeat_metrics['items_inserted'] += len(response_data)
                         else:
                             stats['inserted'] += len(batch_unique)
+                            self.heartbeat_metrics['items_inserted'] += len(batch_unique)
                     except:
                         stats['inserted'] += len(batch_unique)
+                        self.heartbeat_metrics['items_inserted'] += len(batch_unique)
                     
                     print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch_unique)} itens processados")
                     
@@ -314,6 +373,7 @@ class SupabaseClient:
                     print(f"  ❌ Batch {batch_num}/{total_batches}: HTTP {r.status_code}")
                     print(f"     Erro: {error_msg}")
                     stats['errors'] += len(batch_unique)
+                    self.heartbeat_metrics['errors'] += len(batch_unique)
             
             except requests.exceptions.Timeout:
                 print(f"  ⏱️ Batch {batch_num}/{total_batches}: Timeout (120s)")
