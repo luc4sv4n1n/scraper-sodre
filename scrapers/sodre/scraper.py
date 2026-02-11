@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SODRÉ SANTORO - SCRAPER COM CATEGORIZAÇÃO REFINADA
-✅ Mapeamento completo para 10 categorias principais
-✅ Paginação robusta - não para prematuramente
-✅ Espera adaptativa por seção
-✅ Deduplicação na coleta
-✅ Mapeamento completo dos campos
+SODRÉ SANTORO - SCRAPER FINAL
+✅ Mapeamento completo: 54 subcategorias → 10 categorias refinadas
+✅ Todos os campos corretamente mapeados para o schema do Supabase
+✅ Paginação robusta
 """
 
 import asyncio
@@ -29,8 +27,8 @@ except:
         SupabaseClient = None
 
 
-class SodreScraperCategorizado:
-    """Scraper Sodré - Com Categorização Refinada"""
+class SodreScraperFinal:
+    """Scraper Sodré - Versão Final com 10 Categorias Refinadas"""
     
     def __init__(self, debug=False):
         self.source = 'sodre'
@@ -61,10 +59,10 @@ class SodreScraperCategorizado:
         
         self.section_counters = {}
         
-        # 🔥 MAPEAMENTO COMPLETO: subcategorias → 10 categorias principais
+        # 🔥 MAPEAMENTO COMPLETO: 54 Subcategorias → 10 Categorias Refinadas
         self.category_mapping = {
             # ========================================
-            # 1️⃣ IMÓVEIS
+            # 1️⃣ IMÓVEIS (20 subcategorias)
             # ========================================
             'apartamento': 'Imóveis',
             'casa': 'Imóveis',
@@ -90,8 +88,9 @@ class SodreScraperCategorizado:
             'área de terras': 'Imóveis',
             
             # ========================================
-            # 2️⃣ VEÍCULOS
+            # 2️⃣ VEÍCULOS (9 subcategorias)
             # ========================================
+            'bicicleta': 'Veículos',
             'caminhões': 'Veículos',
             'carros': 'Veículos',
             'embarcações': 'Veículos',
@@ -102,10 +101,9 @@ class SodreScraperCategorizado:
             'utilitarios leves': 'Veículos',
             'van leve': 'Veículos',
             'veículos': 'Veículos',
-            'bicicleta': 'Veículos',
             
             # ========================================
-            # 3️⃣ MÁQUINAS & EQUIPAMENTOS
+            # 3️⃣ MÁQUINAS & EQUIPAMENTOS (7 subcategorias)
             # ========================================
             'compressores de ar': 'Máquinas & Equipamentos',
             'empilhadeiras': 'Máquinas & Equipamentos',
@@ -117,24 +115,24 @@ class SodreScraperCategorizado:
             'tratores': 'Máquinas & Equipamentos',
             
             # ========================================
-            # 4️⃣ TECNOLOGIA
+            # 4️⃣ TECNOLOGIA (3 subcategorias)
             # ========================================
             'eletricos': 'Tecnologia',
             'informatica': 'Tecnologia',
             'áudio, vídeo e iluminação': 'Tecnologia',
-            'eletrodomesticos': 'Tecnologia',  # Alguns eletrodomésticos são tech (TVs, etc)
             
             # ========================================
-            # 5️⃣ CASA & CONSUMO
+            # 5️⃣ CASA & CONSUMO (7 subcategorias)
             # ========================================
+            'eletrodomesticos': 'Casa & Consumo',
+            'lazer/esportes': 'Casa & Consumo',
+            'materiais escolares': 'Casa & Consumo',
             'moveis para escritório': 'Casa & Consumo',
             'móveis p/ casa': 'Casa & Consumo',
-            'lazer/esportes': 'Casa & Consumo',
             'uso pessoal': 'Casa & Consumo',
-            'materiais escolares': 'Casa & Consumo',
             
             # ========================================
-            # 6️⃣ INDUSTRIAL & EMPRESARIAL
+            # 6️⃣ INDUSTRIAL & EMPRESARIAL (4 subcategorias)
             # ========================================
             'academia': 'Industrial & Empresarial',
             'esquadrias e estruturas metálicas': 'Industrial & Empresarial',
@@ -142,30 +140,29 @@ class SodreScraperCategorizado:
             'hospitalar': 'Industrial & Empresarial',
             
             # ========================================
-            # 7️⃣ MATERIAIS & SUCATAS
+            # 7️⃣ MATERIAIS & SUCATAS (1 subcategoria)
             # ========================================
             'diversos': 'Materiais & Sucatas',
             
             # ========================================
-            # 9️⃣ ARTE & COLECIONÁVEIS
+            # 9️⃣ ARTE & COLECIONÁVEIS (1 subcategoria)
             # ========================================
             'instrumentos musicais': 'Arte & Colecionáveis',
             
             # ========================================
-            # 🔟 OUTROS
+            # 🔟 OUTROS (2 subcategorias)
             # ========================================
             'unknown': 'Outros',
         }
     
     def _categorize_item(self, subcategory: str) -> str:
         """
-        Mapeia subcategoria original do Sodré para uma das 10 categorias principais
+        Mapeia subcategoria original para uma das 10 categorias refinadas
         
-        Args:
-            subcategory: Subcategoria original (ex: 'carros', 'apartamento', 'informatica')
-        
-        Returns:
-            Uma das 10 categorias principais
+        Prioridade:
+        1. Mapeamento direto (case-insensitive)
+        2. Detecção por palavras-chave
+        3. Fallback: 'Outros'
         """
         if not subcategory:
             return 'Outros'
@@ -173,56 +170,79 @@ class SodreScraperCategorizado:
         # Normaliza
         subcategory_clean = subcategory.lower().strip()
         
-        # Busca no mapeamento
+        # Busca no mapeamento direto
         category = self.category_mapping.get(subcategory_clean)
-        
         if category:
             return category
         
-        # Fallback: tenta detectar pela subcategoria
-        if 'imovel' in subcategory_clean or 'imóvel' in subcategory_clean or \
-           'apartamento' in subcategory_clean or 'casa' in subcategory_clean or \
-           'terreno' in subcategory_clean or 'galpão' in subcategory_clean:
+        # Fallback: Detecção por palavras-chave
+        # IMÓVEIS
+        if any(word in subcategory_clean for word in [
+            'imov', 'imovel', 'apartamento', 'casa', 'terreno', 'galpão', 'galpao',
+            'gleba', 'lote', 'edifica', 'residencial', 'nua-propriedade'
+        ]):
             return 'Imóveis'
         
-        if 'carro' in subcategory_clean or 'moto' in subcategory_clean or \
-           'caminhão' in subcategory_clean or 'veículo' in subcategory_clean or \
-           'veiculo' in subcategory_clean or 'ônibus' in subcategory_clean:
+        # VEÍCULOS
+        if any(word in subcategory_clean for word in [
+            'carro', 'moto', 'caminhão', 'caminhao', 'onibus', 'ônibus',
+            'embarca', 'veiculo', 'veículo', 'van', 'perua', 'utilit', 'bicicleta'
+        ]):
             return 'Veículos'
         
-        if 'trator' in subcategory_clean or 'empilhadeira' in subcategory_clean or \
-           'gerador' in subcategory_clean or 'compressor' in subcategory_clean or \
-           'implemento' in subcategory_clean:
+        # MÁQUINAS & EQUIPAMENTOS
+        if any(word in subcategory_clean for word in [
+            'trator', 'empilhadeira', 'gerador', 'compressor', 'implemento',
+            'terraplenagem', 'agrícola', 'agricola', 'industrial'
+        ]):
             return 'Máquinas & Equipamentos'
         
-        if 'informática' in subcategory_clean or 'informatica' in subcategory_clean or \
-           'eletron' in subcategory_clean or 'eletr' in subcategory_clean or \
-           'áudio' in subcategory_clean or 'audio' in subcategory_clean:
+        # TECNOLOGIA
+        if any(word in subcategory_clean for word in [
+            'informática', 'informatica', 'eletron', 'eletric', 'áudio', 'audio',
+            'vídeo', 'video', 'iluminação', 'iluminacao', 'tech', 'celular'
+        ]):
             return 'Tecnologia'
         
-        if 'móvel' in subcategory_clean or 'movel' in subcategory_clean or \
-           'lazer' in subcategory_clean or 'esporte' in subcategory_clean:
+        # CASA & CONSUMO
+        if any(word in subcategory_clean for word in [
+            'móvel', 'movel', 'eletrodomest', 'lazer', 'esporte', 'escola',
+            'escritório', 'escritorio', 'decoração', 'decoracao', 'uso pessoal'
+        ]):
             return 'Casa & Consumo'
         
-        if 'ferramenta' in subcategory_clean or 'industrial' in subcategory_clean or \
-           'academia' in subcategory_clean or 'hospitalar' in subcategory_clean:
+        # INDUSTRIAL & EMPRESARIAL
+        if any(word in subcategory_clean for word in [
+            'academia', 'esquadria', 'ferramenta', 'hospitalar', 'comercial',
+            'cozinha industrial', 'estoque'
+        ]):
             return 'Industrial & Empresarial'
         
-        if 'sucata' in subcategory_clean or 'material' in subcategory_clean or \
-           'diversos' in subcategory_clean:
+        # MATERIAIS & SUCATAS
+        if any(word in subcategory_clean for word in [
+            'diversos', 'sucata', 'material', 'resíduo', 'residuo', 'bruto', 'lote'
+        ]):
             return 'Materiais & Sucatas'
         
-        if 'instrumento' in subcategory_clean or 'musical' in subcategory_clean or \
-           'arte' in subcategory_clean or 'colecionável' in subcategory_clean:
+        # ARTE & COLECIONÁVEIS
+        if any(word in subcategory_clean for word in [
+            'instrumento', 'arte', 'relógio', 'relogio', 'bolsa', 'joia',
+            'caneta', 'colecion', 'antiguidade'
+        ]):
             return 'Arte & Colecionáveis'
         
-        # Default
+        # ANIMAIS
+        if any(word in subcategory_clean for word in [
+            'animal', 'gado', 'cavalo', 'boi', 'vaca', 'pet'
+        ]):
+            return 'Animais'
+        
         return 'Outros'
     
     async def scrape(self) -> List[Dict]:
         """Scrape completo com interceptação passiva"""
         print("\n" + "="*60)
-        print("🟣 SODRÉ SANTORO - VERSÃO CATEGORIZADA")
+        print("🟣 SODRÉ SANTORO - VERSÃO FINAL")
         print("="*60)
         
         all_lots = []
@@ -323,179 +343,210 @@ class SodreScraperCategorizado:
                     
                     # ✅ PAGINAÇÃO ROBUSTA
                     if len(all_lots) > lots_before:
-                        # Contador de tentativas sem sucesso de CLICK (não de dados)
                         failed_clicks = 0
                         max_failed_clicks = 5
                         
                         for page_num in range(2, config['max_pages'] + 1):
                             try:
-                                # Scroll
                                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                                 await asyncio.sleep(1)
                                 
-                                # Tenta clicar no botão "próxima"
-                                button_clicked = False
-                                
-                                # Seletores possíveis
-                                next_selectors = [
-                                    'button:has-text("Próxima")',
-                                    'button:has-text("próxima")',
-                                    'a:has-text("Próxima")',
-                                    'a:has-text("próxima")',
-                                    '[aria-label*="próxima" i]',
-                                    '[aria-label*="next" i]',
-                                    'button.pagination-next',
-                                    'a.pagination-next',
+                                selectors = [
+                                    'button[title="Avançar"]:not([disabled])',
+                                    'button[title="Avançar"]',
+                                    'button:has-text("Avançar"):not([disabled])',
+                                    'button.i-mdi\\:chevron-right:not([disabled])',
+                                    '.pagination button:last-child:not([disabled])',
                                 ]
                                 
-                                for selector in next_selectors:
+                                button_found = False
+                                for selector in selectors:
                                     try:
-                                        btn = page.locator(selector).first
-                                        if await btn.is_visible(timeout=2000):
-                                            await btn.click(timeout=5000)
-                                            button_clicked = True
-                                            print(f"  ➡️ Página {page_num}...")
-                                            break
+                                        button = page.locator(selector).first
+                                        count = await button.count()
+                                        
+                                        if count > 0:
+                                            is_visible = await button.is_visible()
+                                            is_enabled = await button.is_enabled()
+                                            
+                                            if is_visible and is_enabled:
+                                                await button.click()
+                                                button_found = True
+                                                failed_clicks = 0
+                                                break
                                     except:
                                         continue
                                 
-                                if not button_clicked:
+                                if not button_found:
                                     failed_clicks += 1
-                                    if failed_clicks >= max_failed_clicks:
-                                        print(f"  ✅ {page_num - 1} páginas - fim detectado")
-                                        break
-                                    continue
-                                else:
-                                    failed_clicks = 0  # Reset contador
-                                
-                                # Espera dados novos
-                                lots_before_page = len(all_lots)
-                                time_waited = 0
-                                max_wait = 15
-                                
-                                while time_waited < max_wait:
-                                    await asyncio.sleep(2)
-                                    time_waited += 2
+                                    if self.debug:
+                                        print(f"    ⚠️ Botão não encontrado (tentativa {failed_clicks}/{max_failed_clicks})")
                                     
-                                    lots_now = len(all_lots)
-                                    if lots_now > lots_before_page:
-                                        break
-                                
-                                # Se não capturou nada novo após espera máxima
-                                if len(all_lots) == lots_before_page:
-                                    print(f"  ⚠️ Página {page_num}: Sem novos dados após {max_wait}s")
-                                    failed_clicks += 1
                                     if failed_clicks >= max_failed_clicks:
-                                        print(f"  ✅ {page_num - 1} páginas - fim por timeout")
+                                        print(f"  ✅ {page_num-1} páginas - fim detectado")
                                         break
-                            
+                                    
+                                    await asyncio.sleep(2)
+                                    continue
+                                
+                                print(f"  ➡️ Página {page_num}...")
+                                await asyncio.sleep(5)
+                                
                             except Exception as e:
                                 if self.debug:
-                                    print(f"  ⚠️ Erro na página {page_num}: {e}")
-                                failed_clicks += 1
-                                if failed_clicks >= max_failed_clicks:
-                                    break
-                                await asyncio.sleep(2)
-                        
-                        section_total = len(all_lots) - lots_before
-                        print(f"  ✅ TOTAL DA SEÇÃO: {section_total} lotes únicos")
+                                    print(f"  ⚠️ Erro na página {page_num}: {type(e).__name__}")
+                                break
+                    
+                    section_total = len(all_lots) - lots_before
+                    print(f"  ✅ TOTAL DA SEÇÃO: {section_total} lotes únicos")
                 
                 except Exception as e:
-                    print(f"  ❌ Erro na seção {section_name}: {e}")
-                    self.stats['errors'] += 1
+                    print(f"  ❌ Erro: {e}")
             
             await browser.close()
         
         print(f"\n✅ {len(all_lots)} lotes únicos capturados no total")
         
-        # Normaliza dados
-        normalized_items = []
-        category_stats = {}
+        # Processa lotes
+        items = []
+        categories = {}
         
         for lot in all_lots:
-            normalized = self._normalize_lot(lot)
-            if normalized:
-                normalized_items.append(normalized)
-                
-                # Atualiza estatísticas por categoria
-                cat = normalized.get('categoria', 'Outros')
-                if cat not in category_stats:
-                    category_stats[cat] = 0
-                category_stats[cat] += 1
+            try:
+                item = self._normalize_lot(lot)
+                if item:
+                    items.append(item)
+                    
+                    cat = item.get('categoria', 'Outros')
+                    if cat not in categories:
+                        categories[cat] = 0
+                    categories[cat] += 1
+                    
+                    if item.get('has_bid'):
+                        self.stats['with_bids'] += 1
+            except Exception as e:
+                self.stats['errors'] += 1
         
-        # Mostra estatísticas por categoria
-        print(f"\n📊 Por Categoria Principal:")
-        for cat in sorted(category_stats.keys()):
-            count = category_stats[cat]
+        self.stats['total_scraped'] = len(items)
+        
+        print(f"\n📊 Por Categoria Refinada (10 categorias):")
+        for cat, count in sorted(categories.items()):
             print(f"  • {cat}: {count} itens")
         
-        self.stats['total_scraped'] = len(normalized_items)
-        
-        return normalized_items
+        return items
     
     def _normalize_lot(self, lot: Dict) -> Dict:
         """
-        Normaliza lote para schema do Supabase + adiciona categoria principal
+        Normaliza lote para o schema exato de sodre_items
+        ✅ Todos os campos mapeados corretamente
         """
         try:
-            # Extrai subcategoria original
-            subcategory = self._safe_str(lot.get('lot_subcategory') or lot.get('subcategory'))
+            lot_id = lot.get('id') or lot.get('lot_id')
+            if not lot_id:
+                return None
             
-            # 🔥 CATEGORIZA com base na subcategoria
-            categoria_principal = self._categorize_item(subcategory)
+            try:
+                lot_id = int(lot_id)
+            except:
+                return None
             
-            # Conta itens com lances
-            if lot.get('lot_has_bid') or lot.get('lot_auction_date_init'):
-                self.stats['with_bids'] += 1
+            external_id = f"sodre_{lot_id}"
             
+            # Extrai categoria original
+            original_category = self._safe_str(lot.get('category') or lot.get('lot_category') or lot.get('lot_subcategory') or lot.get('subcategory'))
+            
+            # 🔥 CATEGORIZA (10 categorias refinadas)
+            categoria_refinada = self._categorize_item(original_category)
+            
+            # ✅ MAPEAMENTO COMPLETO CONFORME SCHEMA
             item = {
-                'source': self.source,
-                'external_id': self._safe_str(lot.get('id') or lot.get('lot_id')),
+                # IDs e identificadores
+                'external_id': external_id,
+                'lot_id': lot_id,
+                'lot_number': self._safe_str(lot.get('lot_number')),
+                'lot_inspection_number': self._safe_str(lot.get('lot_inspection_number')),
+                'lot_inspection_id': self._parse_int(lot.get('lot_inspection_id')),
+                'auction_id': self._parse_int(lot.get('auction_id')),
                 
-                # 🔥 CATEGORIA PRINCIPAL
-                'categoria': categoria_principal,
+                # Categorias e segmentos
+                'category': original_category,  # categoria original do Sodré
+                'categoria': categoria_refinada,  # 🔥 categoria refinada (10 categorias)
+                'segment_id': self._safe_str(lot.get('segment_id')),
+                'segment_label': self._safe_str(lot.get('segment_label')),
+                'segment_slug': self._safe_str(lot.get('segment_slug')),
+                'lot_category': self._safe_str(lot.get('lot_category')),
                 
-                # Básico
-                'title': self._safe_str(lot.get('lot_name') or lot.get('name')),
-                'description': self._safe_str(lot.get('lot_description') or lot.get('description')),
-                'image_url': self._parse_image(lot.get('lot_pictures') or lot.get('image_url')),
-                'url': f"{self.base_url}/lote/{lot.get('id')}" if lot.get('id') else None,
-                
-                # Leilão
-                'auction_date': self._parse_datetime(lot.get('lot_auction_date_init')),
-                'auction_end_date': self._parse_datetime(lot.get('lot_auction_date_end')),
-                'auction_type': self._safe_str(lot.get('auction_type') or lot.get('lot_auction_type')),
-                'auctioneer': 'Sodré Santoro',
-                
-                # Valores
-                'current_bid': self._parse_numeric(lot.get('lot_current_value')),
-                'minimum_bid': self._parse_numeric(lot.get('lot_minimum_bid')),
-                'estimated_value': self._parse_numeric(lot.get('lot_estimated_value')),
-                'initial_value': self._parse_numeric(lot.get('lot_initial_value')),
-                
-                # Status
-                'status': self._safe_str(lot.get('lot_status') or lot.get('status')),
-                'is_active': lot.get('is_active', True),
+                # Textos principais
+                'title': (
+                    self._safe_str(lot.get('title')) or 
+                    self._safe_str(lot.get('lot_title')) or 
+                    self._safe_str(lot.get('lot_type_name')) or 
+                    'Sem título'
+                ),
+                'description': self._safe_str(lot.get('description') or lot.get('lot_description')),
                 
                 # Localização
-                'city': self._safe_str(lot.get('lot_city') or lot.get('city')),
-                'state': self._safe_str(lot.get('lot_state') or lot.get('state')),
+                'lot_location': self._safe_str(lot.get('lot_location')),
+                'city': self._safe_str(lot.get('city')),
+                'state': self._safe_str(lot.get('state')),
+                
+                # Leilão
+                'auction_name': self._safe_str(lot.get('auction_name')),
+                'auction_status': self._safe_str(lot.get('auction_status')),
+                'auction_date_init': self._parse_datetime(lot.get('auction_date_init') or lot.get('auction_date')),
+                'auction_date_2': self._parse_datetime(lot.get('auction_date_2')),
+                'auction_date_end': self._parse_datetime(lot.get('auction_date_end')),
+                
+                # Leiloeiro e cliente
+                'auctioneer_name': self._safe_str(lot.get('auctioneer_name')),
+                'client_id': self._parse_int(lot.get('client_id')),
+                'client_name': self._safe_str(lot.get('client_name')),
+                
+                # Lances
+                'bid_initial': self._parse_numeric(lot.get('bid_initial') or lot.get('initial_bid')),
+                'bid_actual': self._parse_numeric(lot.get('bid_actual') or lot.get('current_bid')),
+                'bid_has_bid': bool(lot.get('bid_has_bid', False)),
+                'bid_user_nickname': self._safe_str(lot.get('bid_user_nickname')),
                 
                 # Veículos
-                'vehicle_brand': self._safe_str(lot.get('lot_brand')),
-                'vehicle_model': self._safe_str(lot.get('lot_model')),
-                'vehicle_year': self._parse_int(lot.get('lot_year')),
-                'vehicle_color': self._safe_str(lot.get('lot_color')),
-                'vehicle_km': self._parse_int(lot.get('lot_km')),
-                'vehicle_plate': self._safe_str(lot.get('lot_plate')),
-                'vehicle_fuel': self._safe_str(lot.get('lot_fuel')),
+                'lot_brand': self._safe_str(lot.get('lot_brand')),
+                'lot_model': self._safe_str(lot.get('lot_model')),
+                'lot_year_manufacture': self._parse_int(lot.get('lot_year_manufacture')),
+                'lot_year_model': self._parse_int(lot.get('lot_year_model')),
+                'lot_plate': self._safe_str(lot.get('lot_plate')),
+                'lot_color': self._safe_str(lot.get('lot_color')),
+                'lot_km': self._parse_int(lot.get('lot_km')),
+                'lot_fuel': self._safe_str(lot.get('lot_fuel')),
+                'lot_transmission': self._safe_str(lot.get('lot_transmission')),
+                'lot_sinister': self._safe_str(lot.get('lot_sinister')),
+                'lot_origin': self._safe_str(lot.get('lot_origin')),
                 'lot_optionals': self._parse_optionals(lot.get('lot_optionals')),
+                'lot_tags': self._safe_str(lot.get('lot_tags')),
                 
-                # Judicial
-                'lot_number': self._safe_str(lot.get('lot_number')),
+                # Imagem e link
+                'image_url': self._parse_image(lot.get('image_url') or lot.get('lot_image_url') or lot.get('lot_pictures')),
+                'link': f"{self.base_url}/lote/{lot_id}",
+                
+                # Status e flags
+                'lot_status': self._safe_str(lot.get('lot_status')),
+                'lot_status_id': self._parse_int(lot.get('lot_status_id')),
+                'lot_is_judicial': bool(lot.get('lot_is_judicial', False)),
+                'lot_is_scrap': bool(lot.get('lot_is_scrap', False)),
+                'lot_financeable': bool(lot.get('lot_financeable') or lot.get('lot_status_financeable', False)),
+                'is_highlight': bool(lot.get('is_highlight', False)),
+                'lot_test': bool(lot.get('lot_test', False)),
+                'lot_visits': self._parse_int(lot.get('lot_visits')) or 0,
+                
+                # Source e controle
+                'source': self.source,
+                'is_active': True,
+                'has_bid': bool(lot.get('bid_has_bid', False)),
+                
+                # Campos judiciais (imóveis)
                 'lot_judicial_process': self._safe_str(lot.get('lot_judicial_process')),
-                'lot_judicial_vara': self._safe_str(lot.get('lot_judicial_vara')),
-                'lot_judicial_district': self._safe_str(lot.get('lot_judicial_district')),
+                'lot_judicial_action': self._safe_str(lot.get('lot_judicial_action')),
+                'lot_judicial_executor': self._safe_str(lot.get('lot_judicial_executor')),
+                'lot_judicial_executed': self._safe_str(lot.get('lot_judicial_executed')),
                 'lot_judicial_judge': self._safe_str(lot.get('lot_judicial_judge')),
                 'tj_praca_value': self._parse_numeric(lot.get('tj_praca_value')),
                 'tj_praca_discount': self._parse_numeric(lot.get('tj_praca_discount')),
@@ -510,8 +561,8 @@ class SodreScraperCategorizado:
                 'lot_total_area': self._parse_numeric(lot.get('lot_total_area')),
                 'lot_suites': self._parse_int(lot.get('lot_suites')),
                 
-                # Materiais - SUBCATEGORIA ORIGINAL
-                'lot_subcategory': subcategory,
+                # Materiais - subcategoria original
+                'lot_subcategory': original_category,
                 'lot_type_name': self._safe_str(lot.get('lot_type_name')),
                 
                 # Metadata
@@ -530,10 +581,7 @@ class SodreScraperCategorizado:
         """Constrói metadata com campos extras"""
         metadata = {}
         
-        # Campos extras
-        extra_fields = [
-            'segment_base', 'search_terms',
-        ]
+        extra_fields = ['segment_base', 'search_terms']
         
         for field in extra_fields:
             val = lot.get(field)
@@ -607,7 +655,7 @@ class SodreScraperCategorizado:
 
 async def main():
     print("\n" + "="*70)
-    print("🚀 SODRÉ SANTORO - SCRAPER CATEGORIZADO")
+    print("🚀 SODRÉ SANTORO - SCRAPER FINAL")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
@@ -626,11 +674,11 @@ async def main():
             if supabase.test():
                 supabase.heartbeat_start(metadata={
                     'scraper': 'sodre',
-                    'version': 'categorizada',
+                    'version': 'final_10_categorias',
                 })
         
         print("\n🔥 FASE 1: COLETANDO DADOS")
-        scraper = SodreScraperCategorizado(debug=False)
+        scraper = SodreScraperFinal(debug=False)
         items = await scraper.scrape()
         
         print(f"\n✅ Total coletado: {len(items)} itens")
@@ -667,7 +715,6 @@ async def main():
             if stats['errors'] > 0:
                 print(f"    ⚠️ Erros: {stats['errors']}")
             
-            # ✅ Usa heartbeat_success() para manter status='active' e event='completed'
             supabase.heartbeat_success(final_stats={
                 'items_collected': len(items),
                 'items_inserted': stats['inserted'],
