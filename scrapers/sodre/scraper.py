@@ -482,6 +482,7 @@ class SodreScraperFinal:
                 # Filtra ativos
                 batch_active = 0
                 batch_filtered = 0
+                filtered_in_batch = []
                 
                 for item, is_active in zip(batch, results):
                     if isinstance(is_active, bool) and is_active:
@@ -490,8 +491,15 @@ class SodreScraperFinal:
                     else:
                         filtered_by_link += 1
                         batch_filtered += 1
+                        # Guarda link filtrado para mostrar
+                        filtered_in_batch.append(item.get('link', 'sem link'))
                 
                 print(f"✅ {batch_active} ativos | ❌ {batch_filtered} encerrados")
+                
+                # 🔥 NOVO: Mostra quais foram filtrados
+                if batch_filtered > 0 and filtered_in_batch:
+                    for link in filtered_in_batch[:2]:  # Mostra até 2
+                        print(f"      ↳ Filtrado: {link[:80]}...")
                 
                 # Pequeno delay entre batches
                 if i + batch_size < len(items):
@@ -521,8 +529,11 @@ class SodreScraperFinal:
             page = await browser.new_page()
             
             try:
-                await page.goto(link, wait_until="domcontentloaded", timeout=10000)
-                await asyncio.sleep(1)
+                # 🔥 CORREÇÃO: wait_until="networkidle" + mais tempo de espera
+                await page.goto(link, wait_until="networkidle", timeout=15000)
+                
+                # 🔥 CORREÇÃO: Espera 3 segundos para redirecionamento
+                await asyncio.sleep(3)
                 
                 final_url = page.url
                 
@@ -530,10 +541,18 @@ class SodreScraperFinal:
                 if "lotes-encerrados" in final_url:
                     return False
                 
+                # 🔥 CORREÇÃO: Verifica também se mudou de domínio
+                if "leilao.sodresantoro.com.br" in link and "www.sodresantoro.com.br" in final_url:
+                    # Mudou de domínio = possível encerrado
+                    return False
+                
                 return True
                 
-            except:
-                return True  # Em caso de erro, aceita (safe)
+            except Exception as e:
+                # Em caso de timeout/erro, aceita (safe) mas loga se debug
+                if self.debug:
+                    print(f"      ⚠️ Erro ao validar {link}: {e}")
+                return True
             finally:
                 await page.close()
                 
@@ -881,7 +900,8 @@ async def main():
         
         # 🔥 FASE 2: VALIDA LINKS (verificando redirecionamentos)
         print("\n🔥 FASE 2: VALIDANDO LINKS")
-        validated_items = await scraper._validate_links_batch(items, batch_size=20)
+        # batch_size=10 porque cada lote espera 3 segundos
+        validated_items = await scraper._validate_links_batch(items, batch_size=10)
         
         print(f"\n📊 RESUMO APÓS VALIDAÇÃO:")
         print(f"  ✅ Lotes válidos (ativos): {len(validated_items)}")
