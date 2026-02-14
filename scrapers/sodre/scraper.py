@@ -452,6 +452,9 @@ class SodreScraperFinal:
             
             external_id = f"sodre_{lot_id}"
             
+            # ✅ Captura auction_id para usar no link
+            auction_id = self._parse_int(lot.get('auction_id'))
+            
             # Extrai categoria original
             original_category = self._safe_str(lot.get('category') or lot.get('lot_category') or lot.get('lot_subcategory') or lot.get('subcategory'))
             
@@ -466,7 +469,7 @@ class SodreScraperFinal:
                 'lot_number': self._safe_str(lot.get('lot_number')),
                 'lot_inspection_number': self._safe_str(lot.get('lot_inspection_number')),
                 'lot_inspection_id': self._parse_int(lot.get('lot_inspection_id')),
-                'auction_id': self._parse_int(lot.get('auction_id')),
+                'auction_id': auction_id,  # ✅ Usa a variável capturada
                 
                 # Categorias e segmentos
                 'category': original_category,  # categoria original do Sodré
@@ -525,7 +528,8 @@ class SodreScraperFinal:
                 
                 # Imagem e link
                 'image_url': self._parse_image(lot.get('image_url') or lot.get('lot_image_url') or lot.get('lot_pictures')),
-                'link': f"{self.base_url}/lote/{lot_id}",
+                # ✅ CORREÇÃO: Link agora inclui auction_id E lot_id
+                'link': f"https://leilao.sodresantoro.com.br/leilao/{auction_id}/lote/{lot_id}/" if auction_id else f"{self.base_url}/lote/{lot_id}",
                 
                 # Status e flags
                 'lot_status': self._safe_str(lot.get('lot_status')),
