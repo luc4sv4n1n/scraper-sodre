@@ -608,8 +608,8 @@ class SodreScraperFinal:
                 
                 # Imagem e link
                 'image_url': self._parse_image(lot.get('image_url') or lot.get('lot_image_url') or lot.get('lot_pictures')),
-                # ✅ LINK CORRETO: Inclui auction_id E lot_id
-                'link': f"https://leilao.sodresantoro.com.br/leilao/{auction_id}/lote/{lot_id}/" if auction_id else f"{self.base_url}/lote/{lot_id}",
+                # 🔥 LINK: Usa o campo 'link' da API (já vem correto) ou constrói como fallback
+                'link': self._safe_str(lot.get('link')) or (f"https://leilao.sodresantoro.com.br/leilao/{auction_id}/lote/{lot_id}/" if auction_id else f"{self.base_url}/lote/{lot_id}"),
                 
                 # Status e flags
                 'lot_status': self._safe_str(lot.get('lot_status')),

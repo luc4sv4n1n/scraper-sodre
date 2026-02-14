@@ -31,13 +31,25 @@ except:
         SupabaseClient = None
 
 
-async def check_lot(auction_id: int, lot_id: int, debug: bool = False) -> str:
+async def check_lot(lot_link: str = None, auction_id: int = None, lot_id: int = None, debug: bool = False) -> str:
     """
     Verifica se lote está ativo ou encerrado acessando a página
     
+    Args:
+        lot_link: Link direto do lote (preferencial, vem do banco)
+        auction_id: ID do leilão (fallback)
+        lot_id: ID do lote (fallback)
+        debug: Modo debug
+    
     Retorna: 'ativo', 'encerrado' ou 'erro'
     """
-    url = f"https://leilao.sodresantoro.com.br/leilao/{auction_id}/lote/{lot_id}/"
+    # Usa o link do banco se disponível, senão constrói
+    if lot_link:
+        url = lot_link
+    elif auction_id and lot_id:
+        url = f"https://leilao.sodresantoro.com.br/leilao/{auction_id}/lote/{lot_id}/"
+    else:
+        return 'erro'
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -77,8 +89,13 @@ async def validate_batch(lots: List[Dict], batch_size: int = 5, debug: bool = Fa
             print(f"  📦 Validando lotes {i+1}-{min(i+batch_size, len(lots))} de {len(lots)}...")
         
         tasks = [
-            check_lot(lot['auction_id'], lot['lot_id'], debug)
-            for lot in batch if lot.get('auction_id') and lot.get('lot_id')
+            check_lot(
+                lot_link=lot.get('link'),
+                auction_id=lot.get('auction_id'), 
+                lot_id=lot.get('lot_id'),
+                debug=debug
+            )
+            for lot in batch
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -115,7 +132,7 @@ async def main():
     # Busca lotes com auction_status='aberto'
     try:
         response = supabase.client.table('sodre_items').select(
-            'lot_id,auction_id,external_id,title'
+            'lot_id,auction_id,external_id,title,link'
         ).eq('source', 'sodre').eq('is_active', True).eq(
             'auction_status', 'aberto'
         ).order('updated_at', desc=True).limit(100).execute()
