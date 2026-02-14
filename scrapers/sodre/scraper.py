@@ -60,6 +60,7 @@ class SodreScraperFinal:
             'errors': 0,
             'filtered_closed': 0,  # ✅ Lotes encerrados filtrados
             'filtered_invalid_status': 0,  # ✅ Lotes filtrados por lot_status
+            'filtered_by_link_validation': 0,  # 🔥 Filtrados validando link
         }
         
         self.section_counters = {}
@@ -440,6 +441,105 @@ class SodreScraperFinal:
         
         return items
     
+    async def _validate_links_batch(self, items: List[Dict], batch_size: int = 20) -> List[Dict]:
+        """
+        🔥 VALIDA LINKS em batches paralelos
+        Acessa cada link e verifica se redireciona para 'lotes-encerrados'
+        
+        Returns:
+            Lista de itens ativos (filtra encerrados)
+        """
+        print(f"\n" + "="*70)
+        print("🔍 VALIDANDO LINKS (verificando se redirecionam)")
+        print("="*70)
+        print(f"  Total a validar: {len(items)} lotes")
+        print(f"  Batch size: {batch_size} (paralelo)")
+        print(f"  ⚠️  Isso pode demorar alguns minutos...")
+        print()
+        
+        active_items = []
+        filtered_by_link = 0
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            
+            for i in range(0, len(items), batch_size):
+                batch = items[i:i+batch_size]
+                
+                print(f"  📦 Batch {(i//batch_size)+1}: lotes {i+1}-{min(i+batch_size, len(items))}... ", end='', flush=True)
+                
+                # Valida cada lote do batch em paralelo
+                tasks = []
+                for item in batch:
+                    link = item.get('link')
+                    if link:
+                        tasks.append(self._check_link_active(link, browser))
+                    else:
+                        tasks.append(asyncio.sleep(0, result=True))  # Sem link = aceita
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Filtra ativos
+                batch_active = 0
+                batch_filtered = 0
+                
+                for item, is_active in zip(batch, results):
+                    if isinstance(is_active, bool) and is_active:
+                        active_items.append(item)
+                        batch_active += 1
+                    else:
+                        filtered_by_link += 1
+                        batch_filtered += 1
+                
+                print(f"✅ {batch_active} ativos | ❌ {batch_filtered} encerrados")
+                
+                # Pequeno delay entre batches
+                if i + batch_size < len(items):
+                    await asyncio.sleep(0.5)
+            
+            await browser.close()
+        
+        print()
+        print(f"  ✅ RESULTADO:")
+        print(f"     Lotes ativos: {len(active_items)}")
+        print(f"     Lotes filtrados (encerrados): {filtered_by_link}")
+        print("="*70)
+        
+        self.stats['filtered_by_link_validation'] = filtered_by_link
+        
+        return active_items
+    
+    async def _check_link_active(self, link: str, browser) -> bool:
+        """
+        Verifica se um link está ativo (não redireciona para lotes-encerrados)
+        
+        Returns:
+            True: lote ativo
+            False: lote encerrado
+        """
+        try:
+            page = await browser.new_page()
+            
+            try:
+                await page.goto(link, wait_until="domcontentloaded", timeout=10000)
+                await asyncio.sleep(1)
+                
+                final_url = page.url
+                
+                # Se redirecionou para lotes-encerrados = encerrado
+                if "lotes-encerrados" in final_url:
+                    return False
+                
+                return True
+                
+            except:
+                return True  # Em caso de erro, aceita (safe)
+            finally:
+                await page.close()
+                
+        except:
+            return True
+    
     def _parse_datetime_obj(self, value):
         """Converte string de data para objeto datetime"""
         if not value:
@@ -779,21 +879,38 @@ async def main():
                 })
             return
         
+        # 🔥 FASE 2: VALIDA LINKS (verificando redirecionamentos)
+        print("\n🔥 FASE 2: VALIDANDO LINKS")
+        validated_items = await scraper._validate_links_batch(items, batch_size=20)
+        
+        print(f"\n📊 RESUMO APÓS VALIDAÇÃO:")
+        print(f"  ✅ Lotes válidos (ativos): {len(validated_items)}")
+        print(f"  ❌ Lotes filtrados (encerrados): {scraper.stats['filtered_by_link_validation']}")
+        
+        if not validated_items:
+            print("\n⚠️ Nenhum lote válido após validação!")
+            if supabase:
+                supabase.heartbeat_finish(status='warning', final_stats={
+                    'items_collected': len(items),
+                    'items_after_validation': 0,
+                })
+            return
+        
         # Salva JSON
         output_dir = Path(__file__).parent / 'data' / 'normalized'
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        json_file = output_dir / f'sodre_{timestamp}.json'
+        json_file = output_dir / f'sodre_validated_{timestamp}.json'
         
         with open(json_file, 'w', encoding='utf-8') as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
-        print(f"💾 JSON: {json_file}")
+            json.dump(validated_items, f, ensure_ascii=False, indent=2)
+        print(f"\n💾 JSON: {json_file}")
         
         # Insere no Supabase
         if supabase:
-            print("\n📤 FASE 2: INSERINDO NO SUPABASE")
-            print(f"\n  📤 sodre_items: {len(items)} itens")
-            stats = supabase.upsert('sodre_items', items)
+            print("\n📤 FASE 3: INSERINDO NO SUPABASE")
+            print(f"  📤 sodre_items: {len(validated_items)} itens")
+            stats = supabase.upsert('sodre_items', validated_items)
             
             print(f"    ✅ Inseridos/Atualizados: {stats['inserted']}")
             if stats.get('duplicates_removed', 0) > 0:
@@ -803,6 +920,8 @@ async def main():
             
             supabase.heartbeat_success(final_stats={
                 'items_collected': len(items),
+                'items_validated': len(validated_items),
+                'items_filtered_by_link': scraper.stats['filtered_by_link_validation'],
                 'items_inserted': stats['inserted'],
                 'items_with_bids': scraper.stats['with_bids'],
                 'duplicates_removed': stats.get('duplicates_removed', 0),
@@ -822,10 +941,12 @@ async def main():
         print("📊 ESTATÍSTICAS FINAIS")
         print("="*70)
         print(f"🟣 Sodré Santoro:")
-        print(f"  • Total coletado: {scraper.stats['total_scraped']}")
+        print(f"  • Total coletado (API): {scraper.stats['total_scraped']}")
         print(f"  • Com lances: {scraper.stats['with_bids']}")
-        print(f"  • Filtrados (encerrados): {scraper.stats['filtered_closed']}")
         print(f"  • Filtrados (status inválido): {scraper.stats['filtered_invalid_status']}")
+        print(f"  • 🔥 Filtrados (validação de link): {scraper.stats['filtered_by_link_validation']}")
+        if 'validated_items' in locals():
+            print(f"  • ✅ TOTAL VÁLIDO (salvos): {len(validated_items)}")
         print(f"  • Erros: {scraper.stats['errors']}")
         print(f"\n⏱️ Duração: {minutes}min {seconds}s")
         print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
