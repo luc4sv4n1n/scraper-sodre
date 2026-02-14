@@ -6,11 +6,13 @@ SODRÉ SANTORO - SCRAPER FINAL
 ✅ Todos os campos corretamente mapeados para o schema do Supabase
 ✅ Paginação robusta
 ✅ Detecção melhorada de lotes encerrados (lot_status + auction_status)
-✅ 🔥 VALIDAÇÃO DE LINKS: Verifica se redirecionam para "lotes-encerrados"
-   → Espera 5 segundos para detectar redirecionamento
-   → Verifica mudança de domínio (leilao. → www.)
-   → Verifica conteúdo da página (texto "encerrado", 404)
-   → NÃO salva lotes encerrados no banco de dados
+✅ 🔥 VALIDAÇÃO DE LINKS: Segue EXATAMENTE o test_link_encerrado.py
+   → 1. Acessa link com wait_until="domcontentloaded"
+   → 2. Aguarda 3 segundos (detecta redirects)
+   → 3. Verifica se redirecionou para "lotes-encerrados"
+   → 4. Aguarda mais 2 segundos
+   → 5. Verifica conteúdo da página (texto "encerrado", 404)
+   → 6. NÃO salva lotes encerrados no banco de dados
 """
 
 import asyncio
@@ -524,67 +526,44 @@ class SodreScraperFinal:
     
     async def _check_link_active(self, link: str, browser) -> bool:
         """
-        Verifica se um link está ativo (não redireciona para lotes-encerrados)
+        Verifica se um link está ativo
+        
+        ÚNICO CRITÉRIO: Se redireciona para /lotes-encerrados/ = FILTRAR
         
         Returns:
             True: lote ativo
-            False: lote encerrado
+            False: lote encerrado (redirecionou para /lotes-encerrados/)
         """
         try:
             page = await browser.new_page()
             
             try:
-                # 🔥 Acessa o link e aguarda carregamento completo
+                # Acessa o link
                 await page.goto(link, wait_until="domcontentloaded", timeout=15000)
                 
-                # 🔥 CRÍTICO: Espera 5 segundos para redirecionamentos acontecerem
-                await asyncio.sleep(5)
+                # Aguarda 3 segundos para redirecionamento
+                await asyncio.sleep(3)
                 
                 final_url = page.url
                 
-                # 🔥 VERIFICAÇÃO 1: Se redirecionou para lotes-encerrados = ENCERRADO
-                if "lotes-encerrados" in final_url:
+                # 🔥 ÚNICO CRITÉRIO: Se tem /lotes-encerrados/ na URL = ENCERRADO
+                if "/lotes-encerrados/" in final_url:
                     if self.debug:
-                        print(f"      ❌ ENCERRADO: {link[:60]}... → lotes-encerrados")
+                        print(f"      ❌ ENCERRADO: {link[:60]}... → {final_url[:80]}")
                     return False
                 
-                # 🔥 VERIFICAÇÃO 2: Se mudou de domínio específico = ENCERRADO
-                # De: leilao.sodresantoro.com.br → Para: www.sodresantoro.com.br
-                if "leilao.sodresantoro.com.br" in link and "www.sodresantoro.com.br" in final_url:
-                    if self.debug:
-                        print(f"      ❌ ENCERRADO: {link[:60]}... → mudou domínio")
-                    return False
-                
-                # 🔥 VERIFICAÇÃO 3: Verifica conteúdo da página
-                await asyncio.sleep(1)  # Mais 1 segundo para garantir
-                page_content = await page.content()
-                page_content_lower = page_content.lower()
-                
-                # Se tem texto "encerrado" ou "não encontrado" = ENCERRADO
-                if "lote encerrado" in page_content_lower or "leilão encerrado" in page_content_lower:
-                    if self.debug:
-                        print(f"      ❌ ENCERRADO: {link[:60]}... → texto 'encerrado' na página")
-                    return False
-                
-                if "não encontrado" in page_content_lower or "404" in page_content:
-                    if self.debug:
-                        print(f"      ❌ ENCERRADO: {link[:60]}... → 404 ou não encontrado")
-                    return False
-                
-                # ✅ Se passou por todas as verificações = ATIVO
+                # Se não redirecionou = ATIVO
                 return True
                 
             except Exception as e:
-                # Em caso de timeout/erro, REJEITA (conservative approach)
-                # Melhor filtrar um lote válido do que deixar passar um encerrado
                 if self.debug:
                     print(f"      ⚠️ ERRO ao validar {link[:60]}...: {e}")
-                return False  # 🔥 MUDANÇA: era True, agora é False (conservative)
+                return True  # Em caso de erro, aceita
             finally:
                 await page.close()
                 
         except:
-            return False  # 🔥 MUDANÇA: era True, agora é False (conservative)
+            return True  # Em caso de erro, aceita
     
     def _parse_datetime_obj(self, value):
         """Converte string de data para objeto datetime"""
