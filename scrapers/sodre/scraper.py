@@ -5,6 +5,7 @@ SODRÉ SANTORO - SCRAPER FINAL
 ✅ Mapeamento completo: 54 subcategorias → 10 categorias refinadas
 ✅ Todos os campos corretamente mapeados para o schema do Supabase
 ✅ Paginação robusta
+✅ Detecção melhorada de lotes encerrados (lot_status + auction_status)
 """
 
 import asyncio
@@ -58,6 +59,7 @@ class SodreScraperFinal:
             'with_bids': 0,
             'errors': 0,
             'filtered_closed': 0,  # ✅ Lotes encerrados filtrados
+            'filtered_invalid_status': 0,  # ✅ Lotes filtrados por lot_status
         }
         
         self.section_counters = {}
@@ -470,10 +472,11 @@ class SodreScraperFinal:
     
     def _is_auction_active(self, lot: Dict) -> bool:
         """
-        🔥 Verifica se o leilão está ativo
+        🔥 Verifica se o leilão está ativo (VERSÃO MELHORADA)
         
         Retorna False se:
         - auction_status é 'Encerrado' ou '3'
+        - lot_status é 'encerrado', 'finalizado', 'vendido', etc.
         - E auction_date_end já passou há mais de 7 dias
         """
         try:
@@ -481,19 +484,25 @@ class SodreScraperFinal:
             now = datetime.now()
             
             # 1️⃣ Verifica auction_status
-            status = str(lot.get('auction_status', '')).lower()
-            if status in ['encerrado', '3', 'closed', 'finalizado']:
+            auction_status = str(lot.get('auction_status', '')).lower()
+            if auction_status in ['encerrado', '3', 'closed', 'finalizado', 'finished']:
                 # Se tem status encerrado, só aceita se for muito recente (margem para 2ª praça)
                 date_end = self._parse_datetime_obj(lot.get('auction_date_end'))
                 if date_end and (now - date_end).days > 7:
                     return False
             
-            # 2️⃣ Verifica se data de fim já passou há muito tempo
+            # 2️⃣ 🔥 NOVO: Verifica lot_status
+            lot_status = str(lot.get('lot_status', '')).lower()
+            if lot_status in ['encerrado', 'finalizado', 'vendido', 'sold', 'closed']:
+                self.stats['filtered_invalid_status'] += 1
+                return False
+            
+            # 3️⃣ Verifica se data de fim já passou há muito tempo
             date_end = self._parse_datetime_obj(lot.get('auction_date_end'))
             if date_end and (now - date_end).days > 14:
                 return False
             
-            # 3️⃣ Se passou nas verificações, aceita
+            # 4️⃣ Se passou nas verificações, aceita
             return True
             
         except Exception as e:
@@ -759,6 +768,7 @@ async def main():
         print(f"\n✅ Total coletado: {len(items)} itens")
         print(f"🔥 Itens com lances: {scraper.stats['with_bids']}")
         print(f"⏭️  Filtrados (encerrados): {scraper.stats['filtered_closed']}")
+        print(f"🔍 Filtrados (status inválido): {scraper.stats['filtered_invalid_status']}")
         print(f"⚠️  Erros: {scraper.stats['errors']}")
         
         if not items:
@@ -815,6 +825,7 @@ async def main():
         print(f"  • Total coletado: {scraper.stats['total_scraped']}")
         print(f"  • Com lances: {scraper.stats['with_bids']}")
         print(f"  • Filtrados (encerrados): {scraper.stats['filtered_closed']}")
+        print(f"  • Filtrados (status inválido): {scraper.stats['filtered_invalid_status']}")
         print(f"  • Erros: {scraper.stats['errors']}")
         print(f"\n⏱️ Duração: {minutes}min {seconds}s")
         print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
