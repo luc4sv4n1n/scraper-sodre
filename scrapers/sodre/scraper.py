@@ -43,11 +43,13 @@ class SodreScraperFinal:
             'sucatas': {'wait_time': 12, 'max_retries': 4, 'max_pages': 200},
         }
         
+        # ✅ URLs com FILTRO: apenas leilões ativos (1) e futuros (2)
+        # NÃO pega encerrados (3)
         self.urls = [
-            f"{self.base_url}/veiculos/lotes?sort=auction_date_init_asc",
-            f"{self.base_url}/imoveis/lotes?sort=auction_date_init_asc",
-            f"{self.base_url}/materiais/lotes?sort=auction_date_init_asc",
-            f"{self.base_url}/sucatas/lotes?sort=auction_date_init_asc",
+            f"{self.base_url}/veiculos/lotes?sort=auction_date_init_asc&auction_status=1,2",
+            f"{self.base_url}/imoveis/lotes?sort=auction_date_init_asc&auction_status=1,2",
+            f"{self.base_url}/materiais/lotes?sort=auction_date_init_asc&auction_status=1,2",
+            f"{self.base_url}/sucatas/lotes?sort=auction_date_init_asc&auction_status=1,2",
         ]
         
         self.stats = {
@@ -55,6 +57,7 @@ class SodreScraperFinal:
             'duplicates': 0,
             'with_bids': 0,
             'errors': 0,
+            'filtered_closed': 0,  # ✅ Lotes encerrados filtrados
         }
         
         self.section_counters = {}
@@ -435,10 +438,73 @@ class SodreScraperFinal:
         
         return items
     
+    def _parse_datetime_obj(self, value):
+        """Converte string de data para objeto datetime"""
+        if not value:
+            return None
+        
+        try:
+            from datetime import datetime
+            
+            if isinstance(value, datetime):
+                return value
+            
+            # Tenta vários formatos
+            formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%d',
+                '%d/%m/%Y %H:%M:%S',
+                '%d/%m/%Y',
+            ]
+            
+            for fmt in formats:
+                try:
+                    return datetime.strptime(str(value)[:19], fmt)
+                except:
+                    continue
+            
+            return None
+        except:
+            return None
+    
+    def _is_auction_active(self, lot: Dict) -> bool:
+        """
+        🔥 Verifica se o leilão está ativo
+        
+        Retorna False se:
+        - auction_status é 'Encerrado' ou '3'
+        - E auction_date_end já passou há mais de 7 dias
+        """
+        try:
+            from datetime import datetime
+            now = datetime.now()
+            
+            # 1️⃣ Verifica auction_status
+            status = str(lot.get('auction_status', '')).lower()
+            if status in ['encerrado', '3', 'closed', 'finalizado']:
+                # Se tem status encerrado, só aceita se for muito recente (margem para 2ª praça)
+                date_end = self._parse_datetime_obj(lot.get('auction_date_end'))
+                if date_end and (now - date_end).days > 7:
+                    return False
+            
+            # 2️⃣ Verifica se data de fim já passou há muito tempo
+            date_end = self._parse_datetime_obj(lot.get('auction_date_end'))
+            if date_end and (now - date_end).days > 14:
+                return False
+            
+            # 3️⃣ Se passou nas verificações, aceita
+            return True
+            
+        except Exception as e:
+            # Em caso de erro, aceita (safe)
+            return True
+    
     def _normalize_lot(self, lot: Dict) -> Dict:
         """
         Normaliza lote para o schema exato de sodre_items
         ✅ Todos os campos mapeados corretamente
+        ✅ FILTRA leilões encerrados
         """
         try:
             lot_id = lot.get('id') or lot.get('lot_id')
@@ -448,6 +514,11 @@ class SodreScraperFinal:
             try:
                 lot_id = int(lot_id)
             except:
+                return None
+            
+            # 🔥 FILTRO: Verifica se leilão está ativo ANTES de processar
+            if not self._is_auction_active(lot):
+                self.stats['filtered_closed'] += 1
                 return None
             
             external_id = f"sodre_{lot_id}"
@@ -528,7 +599,7 @@ class SodreScraperFinal:
                 
                 # Imagem e link
                 'image_url': self._parse_image(lot.get('image_url') or lot.get('lot_image_url') or lot.get('lot_pictures')),
-                # ✅ CORREÇÃO: Link agora inclui auction_id E lot_id
+                # ✅ LINK CORRETO: Inclui auction_id E lot_id
                 'link': f"https://leilao.sodresantoro.com.br/leilao/{auction_id}/lote/{lot_id}/" if auction_id else f"{self.base_url}/lote/{lot_id}",
                 
                 # Status e flags
@@ -687,6 +758,7 @@ async def main():
         
         print(f"\n✅ Total coletado: {len(items)} itens")
         print(f"🔥 Itens com lances: {scraper.stats['with_bids']}")
+        print(f"⏭️  Filtrados (encerrados): {scraper.stats['filtered_closed']}")
         print(f"⚠️  Erros: {scraper.stats['errors']}")
         
         if not items:
@@ -742,6 +814,7 @@ async def main():
         print(f"🟣 Sodré Santoro:")
         print(f"  • Total coletado: {scraper.stats['total_scraped']}")
         print(f"  • Com lances: {scraper.stats['with_bids']}")
+        print(f"  • Filtrados (encerrados): {scraper.stats['filtered_closed']}")
         print(f"  • Erros: {scraper.stats['errors']}")
         print(f"\n⏱️ Duração: {minutes}min {seconds}s")
         print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
