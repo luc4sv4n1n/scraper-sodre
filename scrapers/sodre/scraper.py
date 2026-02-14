@@ -6,6 +6,11 @@ SODRÉ SANTORO - SCRAPER FINAL
 ✅ Todos os campos corretamente mapeados para o schema do Supabase
 ✅ Paginação robusta
 ✅ Detecção melhorada de lotes encerrados (lot_status + auction_status)
+✅ 🔥 VALIDAÇÃO DE LINKS: Verifica se redirecionam para "lotes-encerrados"
+   → Espera 5 segundos para detectar redirecionamento
+   → Verifica mudança de domínio (leilao. → www.)
+   → Verifica conteúdo da página (texto "encerrado", 404)
+   → NÃO salva lotes encerrados no banco de dados
 """
 
 import asyncio
@@ -529,35 +534,57 @@ class SodreScraperFinal:
             page = await browser.new_page()
             
             try:
-                # 🔥 CORREÇÃO: wait_until="networkidle" + mais tempo de espera
-                await page.goto(link, wait_until="networkidle", timeout=15000)
+                # 🔥 Acessa o link e aguarda carregamento completo
+                await page.goto(link, wait_until="domcontentloaded", timeout=15000)
                 
-                # 🔥 CORREÇÃO: Espera 3 segundos para redirecionamento
-                await asyncio.sleep(3)
+                # 🔥 CRÍTICO: Espera 5 segundos para redirecionamentos acontecerem
+                await asyncio.sleep(5)
                 
                 final_url = page.url
                 
-                # Se redirecionou para lotes-encerrados = encerrado
+                # 🔥 VERIFICAÇÃO 1: Se redirecionou para lotes-encerrados = ENCERRADO
                 if "lotes-encerrados" in final_url:
+                    if self.debug:
+                        print(f"      ❌ ENCERRADO: {link[:60]}... → lotes-encerrados")
                     return False
                 
-                # 🔥 CORREÇÃO: Verifica também se mudou de domínio
+                # 🔥 VERIFICAÇÃO 2: Se mudou de domínio específico = ENCERRADO
+                # De: leilao.sodresantoro.com.br → Para: www.sodresantoro.com.br
                 if "leilao.sodresantoro.com.br" in link and "www.sodresantoro.com.br" in final_url:
-                    # Mudou de domínio = possível encerrado
+                    if self.debug:
+                        print(f"      ❌ ENCERRADO: {link[:60]}... → mudou domínio")
                     return False
                 
+                # 🔥 VERIFICAÇÃO 3: Verifica conteúdo da página
+                await asyncio.sleep(1)  # Mais 1 segundo para garantir
+                page_content = await page.content()
+                page_content_lower = page_content.lower()
+                
+                # Se tem texto "encerrado" ou "não encontrado" = ENCERRADO
+                if "lote encerrado" in page_content_lower or "leilão encerrado" in page_content_lower:
+                    if self.debug:
+                        print(f"      ❌ ENCERRADO: {link[:60]}... → texto 'encerrado' na página")
+                    return False
+                
+                if "não encontrado" in page_content_lower or "404" in page_content:
+                    if self.debug:
+                        print(f"      ❌ ENCERRADO: {link[:60]}... → 404 ou não encontrado")
+                    return False
+                
+                # ✅ Se passou por todas as verificações = ATIVO
                 return True
                 
             except Exception as e:
-                # Em caso de timeout/erro, aceita (safe) mas loga se debug
+                # Em caso de timeout/erro, REJEITA (conservative approach)
+                # Melhor filtrar um lote válido do que deixar passar um encerrado
                 if self.debug:
-                    print(f"      ⚠️ Erro ao validar {link}: {e}")
-                return True
+                    print(f"      ⚠️ ERRO ao validar {link[:60]}...: {e}")
+                return False  # 🔥 MUDANÇA: era True, agora é False (conservative)
             finally:
                 await page.close()
                 
         except:
-            return True
+            return False  # 🔥 MUDANÇA: era True, agora é False (conservative)
     
     def _parse_datetime_obj(self, value):
         """Converte string de data para objeto datetime"""
